@@ -86,42 +86,11 @@ bool UpdateSections(IMAGE_NT_HEADERS* pNtHeader)
 	return true;
 }
 
-// Implement CalculateChecksum
-DWORD CalculateChecksum(const BYTE* pData, DWORD dwSize)
-{
-	DWORD dwChecksum = 0;
-	DWORD dwChecksumOffset = 0;
-	DWORD dwChecksumSize = 0;
-
-	// Get the checksum offset and size.
-	IMAGE_NT_HEADERS* pNtHeader = NULL;
-	IMAGE_OPTIONAL_HEADER* pOptHeader = NULL;
-	if(!GetPtrs(pData, NULL, &pNtHeader, &pOptHeader))
-	{
-		return 0;
-	}
-
-	// Checksum is calculated from the beginning of the file to the Checksum field.
-	dwChecksumOffset = (DWORD)((BYTE*)&pOptHeader->CheckSum - pData);
-	dwChecksumSize = dwChecksumOffset + sizeof(pOptHeader->CheckSum);
-
-	// Calculate the checksum.
-	for(DWORD x = 0; x < dwSize; x += sizeof(DWORD))
-	{
-		DWORD dwData = 0;
-		memcpy(&dwData, pData + x, sizeof(DWORD));
-		dwChecksum += dwData;
-	}
-
-	// Add the size of the file to the checksum.
-	dwChecksum += dwSize;
-
-	return dwChecksum;
-}
-
-
 std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYTE>& newSectionData, std::string sectionName)
 {
+	/// TODO: Update checksums.
+	/// TODO: Modify or zero the rich header.
+
 	IMAGE_NT_HEADERS* pNtHeader = NULL;
 	IMAGE_OPTIONAL_HEADER* pOptHeader = NULL;
 	auto SetPtrs = [&]() -> bool
@@ -138,6 +107,7 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYT
 		sectionName.append("\x00");
 	}
 
+	// Find the section to modify.
 	WORD wSectionIndex = 0;
 	IMAGE_SECTION_HEADER* pSectionHeader = IMAGE_FIRST_SECTION(pNtHeader);
 	for(wSectionIndex = 0; wSectionIndex < pNtHeader->FileHeader.NumberOfSections; ++wSectionIndex)
@@ -153,10 +123,24 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYT
 		return {};
 	}
 
+	DWORD dwNewSizeAligned = Align((DWORD)newSectionData.size(), pOptHeader->FileAlignment);
+	DWORD dwOriginalSize = pSectionHeader->Misc.VirtualSize;
+	DWORD dwOriginalSizeAligned = Align(dwOriginalSize, pOptHeader->SectionAlignment);
+	DWORD dwAlignedSizeDiff = dwNewSizeAligned - dwOriginalSizeAligned;
+
+	// If the new size is smaller than the original size then just overwrite the data.
+	// You could still resize this section's data, but it's not necessary.
+	if(dwNewSizeAligned <= pSectionHeader->SizeOfRawData)
+	{
+		ZeroMemory(peData.data() + pSectionHeader->PointerToRawData, pSectionHeader->SizeOfRawData);
+		CopyMemory(peData.data() + pSectionHeader->PointerToRawData, newSectionData.data(), newSectionData.size());
+
+		return peData;
+	}
+
 	// Remove the section data.
 	auto dataStart = peData.begin() + pSectionHeader->PointerToRawData;
 	peData.erase(dataStart, dataStart + pSectionHeader->SizeOfRawData);
-
 	if(!SetPtrs())
 	{
 		return {};
@@ -165,25 +149,25 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYT
 
 	// Insert the new section data.
 	peData.insert(dataStart, newSectionData.begin(), newSectionData.end());
-
 	if(!SetPtrs())
 	{
 		return {};
 	}
 	pSectionHeader = IMAGE_FIRST_SECTION(pNtHeader) + wSectionIndex;
 
-	DWORD dwNewSizeAligned = Align((DWORD)newSectionData.size(), pOptHeader->FileAlignment);
-	DWORD dwOriginalSize = pSectionHeader->Misc.VirtualSize;
-	DWORD dwOriginalSizeAligned = Align(dwOriginalSize, pOptHeader->SectionAlignment);
-
-	/// TODO: Make this work for dwNewSizeAligned < dwOriginalSizeAligned
-	DWORD dwSizeDiff = dwNewSizeAligned - dwOriginalSizeAligned;
-
+	// Update headers.
 	pOptHeader->SizeOfImage -= dwOriginalSizeAligned;
 	pOptHeader->SizeOfImage = Align(pOptHeader->SizeOfImage + dwNewSizeAligned, pOptHeader->SectionAlignment);
 
+	// Update the section.
 	pSectionHeader->Misc.VirtualSize = (DWORD)newSectionData.size();
 	pSectionHeader->SizeOfRawData = dwNewSizeAligned;
+
+	// If this is the last section then there's nothing else to do.
+	if(wSectionIndex == pNtHeader->FileHeader.NumberOfSections - 1)
+	{
+		return peData;
+	}
 
 	// Update all sections after ours
 	if(!UpdateSections(pNtHeader))
@@ -191,47 +175,301 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYT
 		return {};
 	}
 
-	/// TODO: Update the checksum.
-
-	/// TODO: Modify or zero the rich header.
-
-	// Update the addresses for the data directories
+	// Update all data directories.
 	IMAGE_DATA_DIRECTORY* pDataDir = pOptHeader->DataDirectory;
-	for(int x = 0; x < IMAGE_NUMBEROF_DIRECTORY_ENTRIES; ++x)
+	for(BYTE bDirIndex = 0; bDirIndex < IMAGE_NUMBEROF_DIRECTORY_ENTRIES; ++bDirIndex)
 	{
-		if(pDataDir[x].VirtualAddress > pSectionHeader->VirtualAddress)
+		// Check for empty entry.
+		if(!pDataDir[bDirIndex].VirtualAddress)
 		{
-			pDataDir[x].VirtualAddress += dwSizeDiff;
+			continue;
 		}
-	}
 
+		pDataDir[bDirIndex].VirtualAddress += dwAlignedSizeDiff;
 
-	// Update the resources
-	IMAGE_RESOURCE_DIRECTORY* pResDir = (IMAGE_RESOURCE_DIRECTORY*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress));
-	IMAGE_RESOURCE_DIRECTORY_ENTRY* pResDirEntry = (IMAGE_RESOURCE_DIRECTORY_ENTRY*)(pResDir + 1);
-	for(int x = 0; x < pResDir->NumberOfIdEntries + pResDir->NumberOfNamedEntries; ++x)
-	{
-		if(pResDirEntry[x].OffsetToData > pSectionHeader->VirtualAddress)
+		// Directory specific updates...
+		if(IMAGE_DIRECTORY_ENTRY_EXPORT == bDirIndex)
 		{
-			pResDirEntry[x].OffsetToData += dwSizeDiff;
-		}
-	}
-
-	// Update base reloc
-	IMAGE_BASE_RELOCATION* pBaseReloc = (IMAGE_BASE_RELOCATION*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress));
-	while(pBaseReloc->VirtualAddress)
-	{
-		WORD* pReloc = (WORD*)(pBaseReloc + 1);
-		for(int x = 0; x < (pBaseReloc->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD); ++x)
-		{
-			if((*pReloc & 0xFFF) > pSectionHeader->VirtualAddress)
+			auto pExportDir = (IMAGE_EXPORT_DIRECTORY*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress));
+			if(pExportDir->AddressOfFunctions > pSectionHeader->VirtualAddress)
 			{
-				*pReloc += (WORD)dwSizeDiff;
+				pExportDir->AddressOfFunctions += dwAlignedSizeDiff;
 			}
-			++pReloc;
+			if(pExportDir->AddressOfNames > pSectionHeader->VirtualAddress)
+			{
+				pExportDir->AddressOfNames += dwAlignedSizeDiff;
+			}
+			if(pExportDir->AddressOfNameOrdinals > pSectionHeader->VirtualAddress)
+			{
+				pExportDir->AddressOfNameOrdinals += dwAlignedSizeDiff;
+			}
 		}
+		else if(IMAGE_DIRECTORY_ENTRY_IMPORT == bDirIndex)
+		{
+			auto pImportDir = (IMAGE_IMPORT_DESCRIPTOR*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress));
+			while(pImportDir->Name)
+			{
+				if(pImportDir->OriginalFirstThunk > pSectionHeader->VirtualAddress)
+				{
+					pImportDir->OriginalFirstThunk += dwAlignedSizeDiff;
+				}
+				if(pImportDir->FirstThunk > pSectionHeader->VirtualAddress)
+				{
+					pImportDir->FirstThunk += dwAlignedSizeDiff;
+				}
 
-		pBaseReloc = (IMAGE_BASE_RELOCATION*)((BYTE*)pBaseReloc + pBaseReloc->SizeOfBlock);
+				++pImportDir;
+			}
+		}
+		else if(IMAGE_DIRECTORY_ENTRY_RESOURCE == bDirIndex)
+		{
+			auto pResDir = (IMAGE_RESOURCE_DIRECTORY*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress));
+			auto pResDirEntry = (IMAGE_RESOURCE_DIRECTORY_ENTRY*)(pResDir + 1);
+			for(int x = 0; x < pResDir->NumberOfIdEntries + pResDir->NumberOfNamedEntries; ++x)
+			{
+				if(pResDirEntry[x].OffsetToData > pSectionHeader->VirtualAddress)
+				{
+					pResDirEntry[x].OffsetToData += dwAlignedSizeDiff;
+				}
+			}
+		}
+		else if(IMAGE_DIRECTORY_ENTRY_EXCEPTION == bDirIndex)
+		{
+			auto pExceptionDir = (IMAGE_RUNTIME_FUNCTION_ENTRY*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].VirtualAddress));
+			for(int x = 0; x < pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].Size / sizeof(IMAGE_RUNTIME_FUNCTION_ENTRY); ++x)
+			{
+				if(pExceptionDir[x].BeginAddress > pSectionHeader->VirtualAddress)
+				{
+					pExceptionDir[x].BeginAddress += dwAlignedSizeDiff;
+				}
+				if(pExceptionDir[x].EndAddress > pSectionHeader->VirtualAddress)
+				{
+					pExceptionDir[x].EndAddress += dwAlignedSizeDiff;
+				}
+				if(pExceptionDir[x].UnwindInfoAddress > pSectionHeader->VirtualAddress)
+				{
+					pExceptionDir[x].UnwindInfoAddress += dwAlignedSizeDiff;
+				}
+			}
+		}
+		else if(IMAGE_DIRECTORY_ENTRY_SECURITY == bDirIndex) {}
+		else if(IMAGE_DIRECTORY_ENTRY_BASERELOC == bDirIndex)
+		{
+			auto pBaseReloc = (IMAGE_BASE_RELOCATION*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress));
+			while(pBaseReloc->VirtualAddress)
+			{
+				WORD* pReloc = (WORD*)(pBaseReloc + 1);
+				for(int x = 0; x < (pBaseReloc->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD); ++x)
+				{
+					if((*pReloc & 0xFFF) > pSectionHeader->VirtualAddress)
+					{
+						*pReloc += (WORD)dwAlignedSizeDiff;
+					}
+					++pReloc;
+				}
+
+				pBaseReloc = (IMAGE_BASE_RELOCATION*)((BYTE*)pBaseReloc + pBaseReloc->SizeOfBlock);
+			}
+		}
+		else if(IMAGE_DIRECTORY_ENTRY_DEBUG == bDirIndex)
+		{
+			auto pDebugDir = (IMAGE_DEBUG_DIRECTORY*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress));
+			if(pDebugDir->AddressOfRawData > pSectionHeader->VirtualAddress)
+			{
+				pDebugDir->AddressOfRawData += dwAlignedSizeDiff;
+			}
+		}
+		else if(IMAGE_DIRECTORY_ENTRY_ARCHITECTURE == bDirIndex) {}
+		else if(IMAGE_DIRECTORY_ENTRY_GLOBALPTR == bDirIndex) {}
+		else if(IMAGE_DIRECTORY_ENTRY_TLS == bDirIndex)
+		{
+			auto pTlsDir = (IMAGE_TLS_DIRECTORY*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress));
+			if(pTlsDir->AddressOfCallBacks > pSectionHeader->VirtualAddress)
+			{
+				pTlsDir->AddressOfCallBacks += dwAlignedSizeDiff;
+			}
+		}
+		else if(IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG == bDirIndex)
+		{
+			auto pLoadConfigDir = (IMAGE_LOAD_CONFIG_DIRECTORY*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG].VirtualAddress));
+			if(pLoadConfigDir->SecurityCookie > pSectionHeader->VirtualAddress)
+			{
+				pLoadConfigDir->SecurityCookie += dwAlignedSizeDiff;
+			}
+			if(pLoadConfigDir->SEHandlerTable > pSectionHeader->VirtualAddress)
+			{
+				pLoadConfigDir->SEHandlerTable += dwAlignedSizeDiff;
+			}
+			if(pLoadConfigDir->GuardCFCheckFunctionPointer > pSectionHeader->VirtualAddress)
+			{
+				pLoadConfigDir->GuardCFCheckFunctionPointer += dwAlignedSizeDiff;
+			}
+			if(pLoadConfigDir->GuardCFFunctionTable > pSectionHeader->VirtualAddress)
+			{
+				pLoadConfigDir->GuardCFFunctionTable += dwAlignedSizeDiff;
+			}
+			if(pLoadConfigDir->GuardCFFunctionCount > pSectionHeader->VirtualAddress)
+			{
+				pLoadConfigDir->GuardCFFunctionCount += dwAlignedSizeDiff;
+			}
+
+			DWORD* pLockPrefixTable = (DWORD*)(peData.data() + RVAToFileOffset(pNtHeader, pLoadConfigDir->LockPrefixTable));
+			for(int x = 0; pLockPrefixTable[x]; ++x)
+			{
+				if(pLockPrefixTable[x] > pSectionHeader->VirtualAddress)
+				{
+					pLockPrefixTable[x] += dwAlignedSizeDiff;
+				}
+			}
+
+			DWORD* pSeHandlerTable = (DWORD*)(peData.data() + RVAToFileOffset(pNtHeader, pLoadConfigDir->SEHandlerTable));
+			for(int x = 0; pSeHandlerTable[x]; ++x)
+			{
+				if(pSeHandlerTable[x] > pSectionHeader->VirtualAddress)
+				{
+					pSeHandlerTable[x] += dwAlignedSizeDiff;
+				}
+			}
+
+			DWORD* pGuardCfFunctionTable = (DWORD*)(peData.data() + RVAToFileOffset(pNtHeader, pLoadConfigDir->GuardCFFunctionTable));
+			for(int x = 0; pGuardCfFunctionTable[x]; ++x)
+			{
+				if(pGuardCfFunctionTable[x] > pSectionHeader->VirtualAddress)
+				{
+					pGuardCfFunctionTable[x] += dwAlignedSizeDiff;
+				}
+			}
+
+			if(pLoadConfigDir->GuardCFCheckFunctionPointer > pSectionHeader->VirtualAddress)
+			{
+				pLoadConfigDir->GuardCFCheckFunctionPointer += dwAlignedSizeDiff;
+			}
+
+			if(pLoadConfigDir->GuardCFDispatchFunctionPointer > pSectionHeader->VirtualAddress)
+			{
+				pLoadConfigDir->GuardCFDispatchFunctionPointer += dwAlignedSizeDiff;
+			}
+
+			if(pLoadConfigDir->GuardCFFunctionTable > pSectionHeader->VirtualAddress)
+			{
+				pLoadConfigDir->GuardCFFunctionTable += dwAlignedSizeDiff;
+			}
+
+			if(pLoadConfigDir->GuardAddressTakenIatEntryTable > pSectionHeader->VirtualAddress)
+			{
+				pLoadConfigDir->GuardAddressTakenIatEntryTable += dwAlignedSizeDiff;
+			}
+
+			if(pLoadConfigDir->GuardLongJumpTargetTable > pSectionHeader->VirtualAddress)
+			{
+				pLoadConfigDir->GuardLongJumpTargetTable += dwAlignedSizeDiff;
+			}
+		}
+		else if(IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT == bDirIndex)
+		{
+			// This will probably cause issues since WORD vs DWORD and WORD max.
+			auto pBoundImportDir = (IMAGE_BOUND_IMPORT_DESCRIPTOR*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT].VirtualAddress));
+			while(pBoundImportDir->OffsetModuleName)
+			{
+				if(pBoundImportDir->OffsetModuleName > pSectionHeader->VirtualAddress)
+				{
+					pBoundImportDir->OffsetModuleName += (WORD)dwAlignedSizeDiff;
+				}
+				if(pBoundImportDir->TimeDateStamp > pSectionHeader->VirtualAddress)
+				{
+					pBoundImportDir->TimeDateStamp += dwAlignedSizeDiff;
+				}
+				if(pBoundImportDir->OffsetModuleName > pSectionHeader->VirtualAddress)
+				{
+					pBoundImportDir->OffsetModuleName += (WORD)dwAlignedSizeDiff;
+				}
+
+				++pBoundImportDir;
+			}
+		}
+		else if(IMAGE_DIRECTORY_ENTRY_IAT == bDirIndex)
+		{
+			auto pIatDir = (IMAGE_THUNK_DATA*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT].VirtualAddress));
+			while(pIatDir->u1.AddressOfData)
+			{
+				if(pIatDir->u1.AddressOfData > pSectionHeader->VirtualAddress)
+				{
+					pIatDir->u1.AddressOfData += dwAlignedSizeDiff;
+				}
+
+				++pIatDir;
+			}
+		}
+		else if(IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT == bDirIndex)
+		{
+			auto pDelayImportDir = (IMAGE_DELAYLOAD_DESCRIPTOR*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].VirtualAddress));
+			while(pDelayImportDir->DllNameRVA)
+			{
+				if(pDelayImportDir->DllNameRVA > pSectionHeader->VirtualAddress)
+				{
+					pDelayImportDir->DllNameRVA += dwAlignedSizeDiff;
+				}
+				if(pDelayImportDir->ModuleHandleRVA > pSectionHeader->VirtualAddress)
+				{
+					pDelayImportDir->ModuleHandleRVA += dwAlignedSizeDiff;
+				}
+				if(pDelayImportDir->ImportAddressTableRVA > pSectionHeader->VirtualAddress)
+				{
+					pDelayImportDir->ImportAddressTableRVA += dwAlignedSizeDiff;
+				}
+				if(pDelayImportDir->ImportNameTableRVA > pSectionHeader->VirtualAddress)
+				{
+					pDelayImportDir->ImportNameTableRVA += dwAlignedSizeDiff;
+				}
+				if(pDelayImportDir->BoundImportAddressTableRVA > pSectionHeader->VirtualAddress)
+				{
+					pDelayImportDir->BoundImportAddressTableRVA += dwAlignedSizeDiff;
+				}
+				if(pDelayImportDir->UnloadInformationTableRVA > pSectionHeader->VirtualAddress)
+				{
+					pDelayImportDir->UnloadInformationTableRVA += dwAlignedSizeDiff;
+				}
+				if(pDelayImportDir->TimeDateStamp > pSectionHeader->VirtualAddress)
+				{
+					pDelayImportDir->TimeDateStamp += dwAlignedSizeDiff;
+				}
+
+				++pDelayImportDir;
+			}
+		}
+		else if(IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR == bDirIndex)
+		{
+			// No idea if this is correct.
+			auto pComDir = (IMAGE_COR20_HEADER*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].VirtualAddress));
+			if(pComDir->MetaData.VirtualAddress > pSectionHeader->VirtualAddress)
+			{
+				pComDir->MetaData.VirtualAddress += dwAlignedSizeDiff;
+			}
+			if(pComDir->Resources.VirtualAddress > pSectionHeader->VirtualAddress)
+			{
+				pComDir->Resources.VirtualAddress += dwAlignedSizeDiff;
+			}
+			if(pComDir->StrongNameSignature.VirtualAddress > pSectionHeader->VirtualAddress)
+			{
+				pComDir->StrongNameSignature.VirtualAddress += dwAlignedSizeDiff;
+			}
+			if(pComDir->CodeManagerTable.VirtualAddress > pSectionHeader->VirtualAddress)
+			{
+				pComDir->CodeManagerTable.VirtualAddress += dwAlignedSizeDiff;
+			}
+			if(pComDir->VTableFixups.VirtualAddress > pSectionHeader->VirtualAddress)
+			{
+				pComDir->VTableFixups.VirtualAddress += dwAlignedSizeDiff;
+			}
+			if(pComDir->ExportAddressTableJumps.VirtualAddress > pSectionHeader->VirtualAddress)
+			{
+				pComDir->ExportAddressTableJumps.VirtualAddress += dwAlignedSizeDiff;
+			}
+			if(pComDir->ManagedNativeHeader.VirtualAddress > pSectionHeader->VirtualAddress)
+			{
+				pComDir->ManagedNativeHeader.VirtualAddress += dwAlignedSizeDiff;
+			}
+		}
 	}
 
 	return peData;
