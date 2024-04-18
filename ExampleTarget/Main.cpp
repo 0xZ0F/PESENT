@@ -8,7 +8,7 @@
 
 #pragma section(SECTION_TO_MODIFY, read, write)
 __declspec(allocate(SECTION_TO_MODIFY))
-char g_inSection[] = "PLACEHOLDER";
+char g_inSection[0x10000 - 0x3600];
 
 int main()
 {
