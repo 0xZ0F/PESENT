@@ -86,13 +86,47 @@ bool UpdateSections(IMAGE_NT_HEADERS* pNtHeader)
 	return true;
 }
 
-std::vector<BYTE> SetSectionData(std::vector<BYTE> originalData, const std::vector<BYTE>& newSectionData, std::string sectionName)
+// Implement CalculateChecksum
+DWORD CalculateChecksum(const BYTE* pData, DWORD dwSize)
+{
+	DWORD dwChecksum = 0;
+	DWORD dwChecksumOffset = 0;
+	DWORD dwChecksumSize = 0;
+
+	// Get the checksum offset and size.
+	IMAGE_NT_HEADERS* pNtHeader = NULL;
+	IMAGE_OPTIONAL_HEADER* pOptHeader = NULL;
+	if(!GetPtrs(pData, NULL, &pNtHeader, &pOptHeader))
+	{
+		return 0;
+	}
+
+	// Checksum is calculated from the beginning of the file to the Checksum field.
+	dwChecksumOffset = (DWORD)((BYTE*)&pOptHeader->CheckSum - pData);
+	dwChecksumSize = dwChecksumOffset + sizeof(pOptHeader->CheckSum);
+
+	// Calculate the checksum.
+	for(DWORD x = 0; x < dwSize; x += sizeof(DWORD))
+	{
+		DWORD dwData = 0;
+		memcpy(&dwData, pData + x, sizeof(DWORD));
+		dwChecksum += dwData;
+	}
+
+	// Add the size of the file to the checksum.
+	dwChecksum += dwSize;
+
+	return dwChecksum;
+}
+
+
+std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYTE>& newSectionData, std::string sectionName)
 {
 	IMAGE_NT_HEADERS* pNtHeader = NULL;
 	IMAGE_OPTIONAL_HEADER* pOptHeader = NULL;
 	auto SetPtrs = [&]() -> bool
 		{
-			return GetPtrs(originalData.data(), NULL, &pNtHeader, &pOptHeader);
+			return GetPtrs(peData.data(), NULL, &pNtHeader, &pOptHeader);
 		};
 	if(!SetPtrs() || sectionName.length() > 8)
 	{
@@ -120,17 +154,17 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> originalData, const std::vect
 	}
 
 	// Remove the section data.
-	auto dataStart = originalData.begin() + pSectionHeader->PointerToRawData;
-	originalData.erase(dataStart, dataStart + pSectionHeader->SizeOfRawData);
+	auto dataStart = peData.begin() + pSectionHeader->PointerToRawData;
+	peData.erase(dataStart, dataStart + pSectionHeader->SizeOfRawData);
 
 	if(!SetPtrs())
 	{
 		return {};
 	}
-	dataStart = originalData.begin() + pSectionHeader->PointerToRawData;
+	dataStart = peData.begin() + pSectionHeader->PointerToRawData;
 
 	// Insert the new section data.
-	originalData.insert(dataStart, newSectionData.begin(), newSectionData.end());
+	peData.insert(dataStart, newSectionData.begin(), newSectionData.end());
 
 	if(!SetPtrs())
 	{
@@ -139,8 +173,13 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> originalData, const std::vect
 	pSectionHeader = IMAGE_FIRST_SECTION(pNtHeader) + wSectionIndex;
 
 	DWORD dwNewSizeAligned = Align((DWORD)newSectionData.size(), pOptHeader->FileAlignment);
+	DWORD dwOriginalSize = pSectionHeader->Misc.VirtualSize;
+	DWORD dwOriginalSizeAligned = Align(dwOriginalSize, pOptHeader->SectionAlignment);
 
-	pOptHeader->SizeOfImage -= Align(pSectionHeader->Misc.VirtualSize, pOptHeader->SectionAlignment);
+	/// TODO: Make this work for dwNewSizeAligned < dwOriginalSizeAligned
+	DWORD dwSizeDiff = dwNewSizeAligned - dwOriginalSizeAligned;
+
+	pOptHeader->SizeOfImage -= dwOriginalSizeAligned;
 	pOptHeader->SizeOfImage = Align(pOptHeader->SizeOfImage + dwNewSizeAligned, pOptHeader->SectionAlignment);
 
 	pSectionHeader->Misc.VirtualSize = (DWORD)newSectionData.size();
@@ -152,7 +191,50 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> originalData, const std::vect
 		return {};
 	}
 
-	return originalData;
+	/// TODO: Update the checksum.
+
+	/// TODO: Modify or zero the rich header.
+
+	// Update the addresses for the data directories
+	IMAGE_DATA_DIRECTORY* pDataDir = pOptHeader->DataDirectory;
+	for(int x = 0; x < IMAGE_NUMBEROF_DIRECTORY_ENTRIES; ++x)
+	{
+		if(pDataDir[x].VirtualAddress > pSectionHeader->VirtualAddress)
+		{
+			pDataDir[x].VirtualAddress += dwSizeDiff;
+		}
+	}
+
+
+	// Update the resources
+	IMAGE_RESOURCE_DIRECTORY* pResDir = (IMAGE_RESOURCE_DIRECTORY*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress));
+	IMAGE_RESOURCE_DIRECTORY_ENTRY* pResDirEntry = (IMAGE_RESOURCE_DIRECTORY_ENTRY*)(pResDir + 1);
+	for(int x = 0; x < pResDir->NumberOfIdEntries + pResDir->NumberOfNamedEntries; ++x)
+	{
+		if(pResDirEntry[x].OffsetToData > pSectionHeader->VirtualAddress)
+		{
+			pResDirEntry[x].OffsetToData += dwSizeDiff;
+		}
+	}
+
+	// Update base reloc
+	IMAGE_BASE_RELOCATION* pBaseReloc = (IMAGE_BASE_RELOCATION*)(peData.data() + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress));
+	while(pBaseReloc->VirtualAddress)
+	{
+		WORD* pReloc = (WORD*)(pBaseReloc + 1);
+		for(int x = 0; x < (pBaseReloc->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD); ++x)
+		{
+			if((*pReloc & 0xFFF) > pSectionHeader->VirtualAddress)
+			{
+				*pReloc += (WORD)dwSizeDiff;
+			}
+			++pReloc;
+		}
+
+		pBaseReloc = (IMAGE_BASE_RELOCATION*)((BYTE*)pBaseReloc + pBaseReloc->SizeOfBlock);
+	}
+
+	return peData;
 }
 
 int main()
@@ -179,7 +261,7 @@ int main()
 			fprintf(stderr, "Append failed.\n");
 			return -1;
 		}
-}
+	}
 #endif
 
 	std::vector<BYTE> newData(0x10000);
