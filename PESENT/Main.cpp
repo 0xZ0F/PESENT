@@ -20,7 +20,7 @@
 #define DST_FILE "..\\Debug\\ExampleTarget_EXTENDED.exe"
 #endif
 
-#define SECTION_TO_MODIFY ".stuff"
+#define SECTION_TO_MODIFY ".pesent"
 #define RUN_NEW_FILE 1
 
 /// <summary>
@@ -162,8 +162,13 @@ int main()
 
 #ifdef EXTEND_SECTION
 	std::vector<BYTE> newData(0x10000);
-	memset(newData.data(), 'Z', newData.size());
-	newData[4] = 0;
+	for(size_t x = 0; x < newData.size(); x += 4)
+	{
+		newData[x] = 'Z';
+		newData[x + 1] = '0';
+		newData[x + 2] = 'F';
+		newData[x + 3] = 0;
+	}
 
 	fileData = SetSectionData(fileData, newData, SECTION_TO_MODIFY);
 	if(fileData.empty())
