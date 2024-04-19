@@ -1,20 +1,25 @@
 # PESENT
 
-**P**ortable **E**xecutable **S**ection **E**xtender (**N**ot just the **T**ail)
+**P**ortable **E**xecutable **S**ection **E**xtender (**N**ot just the **T**ail).
 
-The goal of this project is to create a PoC capable of modifying, and more specifically enlarging, PE sections. The focus is on common PE formats; so it may not work on, for example, .NET.
+The goal of this project is to create a PoC capable of modifying, and more specifically enlarging, any PE section. The focus is on common PE formats; so it may not work on, for example, .NET.
 
 Say you had a program which you needed to add some data to post-build but before execution. This means you must add the data to the binary on disk. Where would this data go? Unfortunately, simply appending data to the binary isn't good enough since it won't be (fully) loaded into memory. The reason for this is that the data must be within a section to be loaded into memory. Another option is to modify an existing section's data. This works, but you are limited to the current size of that section. Yes, you could make the section very large, but this is wasteful if you don't need that space.
 
 Most post-build section modification projects I've seen either create a new section and append it to the existing sections or they modify the last section. Both situations are similar and trivial, and is almost always all that is needed. However, since I had some time to waste I decided to look into getting around this limitation.
 
+My goal was to be able to create a binary which has a pointer into a section created with `#pragma section(...)`. This section could then be updated post-build with data of any size and at runtime the pointer could be used for direct access to the data.
+
 The following is a technical writeup on extending PE sections as well as some miscellaneous findings. A basic understanding of the layout of the PE header is needed.
 
-> This diagram of the PE header is great. https://web.archive.org/web/20240301215621/https://upload.wikimedia.org/wikipedia/commons/1/1b/Portable_Executable_32_bit_Structure_in_SVG_fixed.svg
+* This diagram of the PE header is great.
+  * https://web.archive.org/web/20240301215621/https://upload.wikimedia.org/wikipedia/commons/1/1b/Portable_Executable_32_bit_Structure_in_SVG_fixed.svg
+* This MSDN page is a helpful reference.
+  * https://learn.microsoft.com/en-us/windows/win32/debug/pe-format
 
 ## Prelude
 
-* The section headers and section data are separate. The section header's come after the optional header. The section data comes after all of the section headers. The section headers contain "pointers" (they are actually file offsets) and virtual addresses which point into section data.
+* The section headers and section data are separate. The section headers come after the optional header. The section data comes after all of the section headers. The section headers contain "pointers" (they are actually file offsets) and virtual addresses which point into section data.
 * When a pointer is mentioned in the context of the PE header, it's a file offset.
 * Virtual Addresses (VAs) are used for mapping the file into memory and do not directly correspond with offsets in the file. However, you can obtain a file offset from a virtual address or a relative virtual address.
 * Relative Virtual Addresses (RVAs) are relative from the base address the image is loaded at. RVAs point into sections. Because of this, RVAs can be converted to file offsets by subtracting the `VirtualAddress` of the section the RVA points into and adding the section's `PointerToRawData`.
@@ -32,14 +37,14 @@ That should be everything.
 
 ## Appending A New Section
 
-To append a new section everything covered previously is still required, but in addition, we must create a new header. This is where I've seen most projects make a mistake. The section header's come after the optional header and are given a fixed amount of space. In other words, you can't just add a new header. First, you have to make sure there is space for a new header. If there isn't space, you must make space.
+To append a new section everything covered previously is still required, but in addition, we must create a new header. This is where I've seen most projects make a mistake. The section headers come after the optional header and are given a fixed amount of space. In other words, you can't just add a new header. First, you have to make sure there is space for a new header. If there isn't space, you must make space.
 
-We'll assume there is space for our new header for now. 
+We'll assume there is space for our new header for now and deal with creating space later.
 
 First we create the new header.
 
-* This header will be located 0x40 bytes (`IMAGE_SIZEOF_SECTION_HEADER`) after the current last header.
-* Set the header's `VirtualAddress` to the sum of the previous section's `VirtualAddress` and `Misc.VirtualSize` aligned to `SectionAlignment`.
+* This header will be located 0x40 (`IMAGE_SIZEOF_SECTION_HEADER`) bytes after the current last header.
+* Set the header's `VirtualAddress` to the sum of the previous section header's `VirtualAddress` and `Misc.VirtualSize` aligned to `SectionAlignment`.
 * Set the header's `PointerToRawData` to the next available raw data pointer. This can be calculated with the sum of the previous section's `PointerToRawData` and `SizeOfRawData` aligned with `FileAlignment` (it should already be aligned).
 * Set the `Misc.VirtualSize`, `VirtualAddress`, and `SizeOfRawData` as before.
 * Set any other needed fields such as the section's `Name` and `Characteristics`.
@@ -66,7 +71,7 @@ For a full implementation of appending a new section, see [`AppendSection()` and
 
 Currently there is a, very unlikely to be encountered, bug. This bug occurs when the `SizeOfHeaders` aligned with `SectionAlignment` is greater than `SectionAlignment`. The reason for this is that, by default, the headers only take up the virtual address range of 0x0000 to 0x1000. However, say you have 100 headers. If this is the case then you need, at least on x64, 0x200 bytes for the DOS, NT, etc. headers, then 0xFA0 bytes for the section headers. When the image is mapped into memory the headers will occupy virtual addresses 0x0000 to 0x2000. This is an issue since the first section is likely mapped to 0x1000. This means we must update all virtual addresses. 
 
-This is the same issue that makes extending a section so difficult. We will discuss how to fix this issue when extending headers. However, due to the rarity of this issue, I likely won't fix it for this case/bug.
+This is the same issue that makes extending a section between other sections so difficult and will be discussed in a moment. We will also implement a fix, just not for this case since it's not likely to be an issue.
 
 ## Extending A Section (In The Middle)
 
@@ -91,7 +96,7 @@ For a full implementation of updating sections, see [UpdateSections() in PEHelpe
 
 This is the point I got stuck at. All of my pointers and VAs were updated but I was still being told the PE was invalid. After a bit of digging, I figured it out and it was quite obvious looking back. In fact, I did see it I just didn't acknowledge it. The issue was hinted at with the section header issue encountered earlier. Remember those sections that are already in the header? Well, they probably aren't there for no reason.
 
-As it turns out, I forgot about data directories. Essentially, there are predefined sections that can exist within a PE. Each directory entry contains a `VirtualAddress`. These data directories are essentially extra PE information. For example, entry index 1 (`IMAGE_DIRECTORY_ENTRY_IMPORT`) is the import directory. The `VirtualAddress` for each entry is actually an RVA into a section. The import directory is usually in the `.idata` section. What this means is that if the import directory entry's `VirtualAddress` is after our modified section's, then it needs to be updated/incremented.
+As it turns out, I forgot about data directories. Essentially, there are predefined sections that can exist within a PE. Each directory entry contains a `VirtualAddress`. These data directories are essentially extra PE information. For example, entry index 1's `VirtualAddress` points to an `IMAGE_DIRECTORY_ENTRY_IMPORT` structure which is the import directory. The `VirtualAddress` for each entry is actually an RVA into a section. The import directory is usually in the `.idata` section. What this means is that if the import directory entry's `VirtualAddress` is after our modified section's, then it needs to be updated/incremented.
 
 * For each data directory, update the `VirtualAddress`. For many sections (not all) it points to the base of the section. This value can be incremented by the aligned amount of data added.
 
