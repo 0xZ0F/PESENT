@@ -12,17 +12,16 @@ My goal was to be able to create a binary which has a pointer into a section cre
 
 The following is a technical writeup on extending PE sections as well as some miscellaneous findings. A basic understanding of the layout of the PE header is needed.
 
-* This diagram of the PE header is great.
-  * https://web.archive.org/web/20240301215621/https://upload.wikimedia.org/wikipedia/commons/1/1b/Portable_Executable_32_bit_Structure_in_SVG_fixed.svg
-* This MSDN page is a helpful reference.
-  * https://learn.microsoft.com/en-us/windows/win32/debug/pe-format
-
 ## Prelude
 
 * The section headers and section data are separate. The section headers come after the optional header. The section data comes after all of the section headers. The section headers contain "pointers" (they are actually file offsets) and virtual addresses which point into section data.
 * When a pointer is mentioned in the context of the PE header, it's a file offset.
 * Virtual Addresses (VAs) are used for mapping the file into memory and do not directly correspond with offsets in the file. However, you can obtain a file offset from a virtual address or a relative virtual address.
 * Relative Virtual Addresses (RVAs) are relative from the base address the image is loaded at. RVAs point into sections. Because of this, RVAs can be converted to file offsets by subtracting the `VirtualAddress` of the section the RVA points into and adding the section's `PointerToRawData`.
+* This diagram of the PE header is great.
+  * https://web.archive.org/web/20240301215621/https://upload.wikimedia.org/wikipedia/commons/1/1b/Portable_Executable_32_bit_Structure_in_SVG_fixed.svg
+* This MSDN page is a helpful reference.
+  * https://learn.microsoft.com/en-us/windows/win32/debug/pe-format
 
 ## Extending The Last Section
 
