@@ -4,7 +4,7 @@
 
 #include <iostream>
 
-#define SECTION_TO_MODIFY ".stuff"
+#define SECTION_TO_MODIFY ".pesent"
 
 #pragma section(SECTION_TO_MODIFY, read, write)
 __declspec(allocate(SECTION_TO_MODIFY))
