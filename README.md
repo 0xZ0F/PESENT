@@ -4,7 +4,7 @@
 
 The goal of this project is to create a PoC capable of modifying, and more specifically enlarging, any PE section. The focus is on common PE formats; so it may not work on, for example, .NET.
 
-Say you had a program which you needed to add some data to post-build but before execution. This means you must add the data to the binary on disk. Where would this data go? Unfortunately, simply appending data to the binary isn't good enough since it won't be (fully) loaded into memory. The reason for this is that the data must be within a section to be loaded into memory. Another option is to modify an existing section's data. This works, but you are limited to the current size of that section. Yes, you could make the section very large, but this is wasteful if you don't need that space.
+Say you had a program which you needed to add some data to post-build but before execution. This means you must add the data to the binary on disk. Where would this data go? Unfortunately, simply appending data to the binary isn't good enough since it won't be (fully) loaded into memory. The reason for this is that the data must be within a section to be loaded into memory. Another option is to modify an existing section's data. This works, but you are limited to the current size of that section. Yes, you could make the section very large, but this is wasteful if you don't need the space.
 
 Most post-build section modification projects I've seen either create a new section and append it to the existing sections or they modify the last section. Both situations are similar and trivial, and is almost always all that is needed. However, since I had some time to waste I decided to look into getting around this limitation.
 
