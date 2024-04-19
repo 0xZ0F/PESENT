@@ -109,6 +109,7 @@ std::vector<BYTE> AddSectionHeaderSpace(std::vector<BYTE> data, DWORD dwToAdd)
 
 	// Already aligned (see above).
 	pOptHeader->SizeOfHeaders += dwToAdd;
+	pOptHeader->SizeOfImage = Align(pOptHeader->SizeOfImage + dwToAdd, pOptHeader->SectionAlignment);
 
 	// Update the PointerToRawData for each section
 	IMAGE_SECTION_HEADER* pSectionHeader = IMAGE_FIRST_SECTION(pNtHeader);

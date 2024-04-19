@@ -10,6 +10,7 @@
 
 #include "FileHelpers.hpp"
 #include "PEHelpers.hpp"
+#include "Extras.hpp"
 
 #ifdef _WIN64
 #define SRC_FILE "..\\x64\\Debug\\ExampleTarget.exe"
@@ -485,6 +486,8 @@ int main()
 		return -1;
 	}
 
+#define APPEND_SECTION 1
+
 #ifdef APPEND_SECTION
 	char sectionFill = 'A';
 	for(size_t x = 0; x < 10; ++x, ++sectionFill)
@@ -493,8 +496,8 @@ int main()
 		memset(newSectionData.data(), sectionFill, newSectionData.size());
 		std::string sectionName = ".hlpme";
 
-		newHeader = AppendSection(newHeader, newSectionData, sectionName);
-		if(newHeader.empty())
+		fileData = AppendSection(fileData, newSectionData, sectionName);
+		if(fileData.empty())
 		{
 			fprintf(stderr, "Append failed.\n");
 			return -1;
@@ -502,6 +505,7 @@ int main()
 	}
 #endif
 
+#ifdef EXTEND_SECTION
 	std::vector<BYTE> newData(0x10000);
 	memset(newData.data(), 'Z', newData.size());
 	newData[4] = 0;
@@ -512,6 +516,7 @@ int main()
 		fprintf(stderr, "Failed to set section data.\n");
 		return -1;
 	}
+#endif
 
 	if(!WriteToFile(DST_FILE, fileData))
 	{
