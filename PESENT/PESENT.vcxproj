@@ -130,6 +130,7 @@
     <ClCompile Include="Main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="DebugPrint.h" />
     <ClInclude Include="Extras.hpp" />
     <ClInclude Include="FileHelpers.hpp" />
     <ClInclude Include="PEHelpers.hpp" />
