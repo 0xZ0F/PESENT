@@ -104,3 +104,11 @@ If you try and run it now, it may or may not work. The problem now is that while
 The updating of the directory entries is done in [AdjustDataDirectories() in PEHelpers.hpp](PESENT/PEHelpers.hpp).
 
 Once all of the directory entries are updated, now it should work... usually. The PE header has many complex and still undocumented structures especially with contraptions such as .NET. With that said, hopefully this PoC and guide can get you pretty far and if you do encounter any extra "fun" you can figure it out a little faster.
+
+### Before
+
+![alt text](_img/Before.png "Title")
+
+### After
+
+![alt text](_img/After.png "Title")

@@ -11,17 +11,17 @@
 #include "FileHelpers.hpp"
 #include "PEHelpers.hpp"
 #include "Extras.hpp"
+#include "DebugPrint.h"
 
 #ifdef _WIN64
-#define SRC_FILE "..\\x64\\Debug\\ExampleTarget.exe"
-#define DST_FILE "..\\x64\\Debug\\ExampleTarget_EXTENDED.exe"
+#define SRC_FILE "..\\x64\\Release\\ExampleTarget.exe"
+#define DST_FILE "..\\x64\\Release\\ExampleTarget_EXTENDED.exe"
 #else
-#define SRC_FILE "..\\Debug\\ExampleTarget.exe"
-#define DST_FILE "..\\Debug\\ExampleTarget_EXTENDED.exe"
+#define SRC_FILE "..\\Release\\ExampleTarget.exe"
+#define DST_FILE "..\\Release\\ExampleTarget_EXTENDED.exe"
 #endif
 
 #define SECTION_TO_MODIFY ".pesent"
-#define RUN_NEW_FILE 1
 
 /// <summary>
 /// Set a section's data. This will resize the section and update the headers if needed.
@@ -35,11 +35,12 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYT
 	/// TODO: Update checksums.
 	/// TODO: Modify or zero the rich header.
 
+	IMAGE_DOS_HEADER* pDosHeader = NULL;
 	IMAGE_NT_HEADERS* pNtHeader = NULL;
 	IMAGE_OPTIONAL_HEADER* pOptHeader = NULL;
 	auto SetPtrs = [&]() -> bool
 		{
-			return GetPtrs(peData.data(), NULL, &pNtHeader, &pOptHeader);
+			return GetPtrs(peData.data(), &pDosHeader, &pNtHeader, &pOptHeader);
 		};
 	if(!SetPtrs() || sectionName.length() > 8)
 	{
@@ -70,7 +71,7 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYT
 	DWORD dwNewSizeAligned = Align((DWORD)newSectionData.size(), pOptHeader->FileAlignment);
 	DWORD dwOriginalSize = pSectionHeader->Misc.VirtualSize;
 	DWORD dwOriginalSizeAligned = Align(dwOriginalSize, pOptHeader->SectionAlignment);
-	DWORD dwAmount = dwNewSizeAligned - dwOriginalSizeAligned;
+	DWORD dwAdjRaw = dwNewSizeAligned - dwOriginalSizeAligned;
 
 	// If the new size is smaller than the original size then just overwrite the data.
 	// You could still resize this section's data, but it's not necessary.
@@ -104,7 +105,10 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYT
 	pOptHeader->SizeOfImage = Align(pOptHeader->SizeOfImage + dwNewSizeAligned, pOptHeader->SectionAlignment);
 
 	// Update the section.
+	DWORD dwAdjVA = Align(pSectionHeader->Misc.VirtualSize, pOptHeader->SectionAlignment);
 	pSectionHeader->Misc.VirtualSize = (DWORD)newSectionData.size();
+	dwAdjVA = Align(pSectionHeader->Misc.VirtualSize, pOptHeader->SectionAlignment) - dwAdjVA;
+
 	pSectionHeader->SizeOfRawData = dwNewSizeAligned;
 
 	// If this is the last section then there's nothing else to do.
@@ -114,6 +118,7 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYT
 	}
 
 	// Update all section headers after ours.
+	IMAGE_SECTION_HEADER* pNextSection = pSectionHeader + 1;
 	if(!UpdateSections(pNtHeader))
 	{
 		return {};
@@ -121,12 +126,85 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYT
 
 	// Update all data directories.
 	IMAGE_DATA_DIRECTORY* pDataDir = pOptHeader->DataDirectory;
-	if(!AdjustDataDirectories(pDataDir, dwAmount, pSectionHeader->PointerToRawData))
+	if(!AdjustDataDirectories(pDosHeader, dwAdjVA, pSectionHeader->VirtualAddress, pSectionHeader->PointerToRawData))
 	{
 		return {};
 	}
 
 	return peData;
+}
+
+inline bool DoAppend(std::vector<BYTE>& peData)
+{
+	char sectionFill = 'A';
+	size_t numToAdd = 10;
+	printf("Adding %zu sections.\n", numToAdd);
+	for(size_t x = 0; x < numToAdd; ++x, ++sectionFill)
+	{
+		std::vector<BYTE> newSectionData(0x200);
+		memset(newSectionData.data(), sectionFill, newSectionData.size());
+		std::string sectionName = ".hlpme";
+
+		peData = AppendSection(peData, newSectionData, sectionName);
+		if(peData.empty())
+		{
+			fprintf(stderr, "Append failed.\n");
+			return false;
+		}
+	}
+
+	return true;
+}
+
+inline bool DoExtend(std::vector<BYTE>& peData)
+{
+	std::vector<BYTE> newData(0x10000);
+	memset(newData.data(), 'Z', newData.size());
+	//for(size_t x = 0; x < newData.size(); x += 4)
+	//{
+	//	newData[x] = 'Z';
+	//	newData[x + 1] = '0';
+	//	newData[x + 2] = 'F';
+	//	newData[x + 3] = 0;
+	//}
+
+	peData = SetSectionData(peData, newData, SECTION_TO_MODIFY);
+	if(peData.empty())
+	{
+		fprintf(stderr, "Failed to set section data.\n");
+		return false;
+	}
+
+	return true;
+}
+
+inline bool RunResult(const char* pszFile)
+{
+	STARTUPINFOA si = { sizeof(si) };
+	PROCESS_INFORMATION pi = { 0 };
+
+	if(!CreateProcessA(pszFile, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+	{
+		if(ERROR_BAD_EXE_FORMAT == GetLastError())
+		{
+			fprintf(stderr, "Invalid executable format.\n");
+		}
+		else
+		{
+			fprintf(stderr, "Failed to create process. Error: %lu\n", GetLastError());
+		}
+
+		return false;
+	}
+
+	if(WAIT_OBJECT_0 != WaitForSingleObject(pi.hProcess, INFINITE))
+	{
+		DebugPrint("Failed to wait for process. Error: %lu\n", GetLastError());
+	}
+	CloseHandle(pi.hProcess);
+	CloseHandle(pi.hThread);
+
+	return true;
 }
 
 int main()
@@ -139,44 +217,10 @@ int main()
 		return -1;
 	}
 
-#define EXTEND_SECTION 1
-
-#ifdef APPEND_SECTION
-	char sectionFill = 'A';
-	size_t numToAdd = 10;
-	printf("Adding %zu sections.\n", numToAdd);
-	for(size_t x = 0; x < numToAdd; ++x, ++sectionFill)
+	if(!DoExtend(fileData))
 	{
-		std::vector<BYTE> newSectionData(0x200);
-		memset(newSectionData.data(), sectionFill, newSectionData.size());
-		std::string sectionName = ".hlpme";
-
-		fileData = AppendSection(fileData, newSectionData, sectionName);
-		if(fileData.empty())
-		{
-			fprintf(stderr, "Append failed.\n");
-			return -1;
-		}
-	}
-#endif
-
-#ifdef EXTEND_SECTION
-	std::vector<BYTE> newData(0x10000);
-	for(size_t x = 0; x < newData.size(); x += 4)
-	{
-		newData[x] = 'Z';
-		newData[x + 1] = '0';
-		newData[x + 2] = 'F';
-		newData[x + 3] = 0;
-	}
-
-	fileData = SetSectionData(fileData, newData, SECTION_TO_MODIFY);
-	if(fileData.empty())
-	{
-		fprintf(stderr, "Failed to set section data.\n");
 		return -1;
 	}
-#endif
 
 	if(!WriteToFile(DST_FILE, fileData))
 	{
@@ -184,27 +228,10 @@ int main()
 		return -1;
 	}
 
-#ifdef RUN_NEW_FILE
-	STARTUPINFOA si = { sizeof(si) };
-	PROCESS_INFORMATION pi = { 0 };
-
-	if(!CreateProcessA(DST_FILE, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+	if(!RunResult(DST_FILE))
 	{
-		if(ERROR_BAD_EXE_FORMAT == GetLastError())
-		{
-			fprintf(stderr, "Invalid executable format.\n");
-		}
-		else
-		{
-			fprintf(stderr, "Failed to create process. Error: %lu\n", GetLastError());
-		}
 		return -1;
 	}
-
-	WaitForSingleObject(pi.hProcess, INFINITE);
-	CloseHandle(pi.hProcess);
-	CloseHandle(pi.hThread);
-#endif
 
 	return 0;
 }
