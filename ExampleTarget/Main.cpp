@@ -5,6 +5,7 @@
 #include <iostream>
 
 #define SECTION_TO_MODIFY ".pesent"
+#define AMOUNT_OF_SECTION_TO_PRINT 32
 
 #pragma section(SECTION_TO_MODIFY, read, write)
 __declspec(allocate(SECTION_TO_MODIFY))
@@ -13,11 +14,11 @@ char g_inSection[1];
 int main()
 {
 	printf("ExampleTarget\n");
-	printf("&g_inSection: %p\n", g_inSection);
-	printf("*g_inSection: %s\n", g_inSection);
+	printf("Addr g_inSection: %p\n", g_inSection);
+	printf("Str g_inSection: %s\n", g_inSection);
 
-	printf("*g_inSection: ");
-	for(int i = 0; i < sizeof(g_inSection); i++)
+	printf("Hex g_inSection: ");
+	for(int i = 0; i < AMOUNT_OF_SECTION_TO_PRINT; i++)
 	{
 		printf("%02X ", g_inSection[i]);
 	}
