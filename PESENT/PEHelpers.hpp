@@ -150,26 +150,32 @@ bool UpdateSections(IMAGE_NT_HEADERS* pNtHeader)
 	return true;
 }
 
-void RelocateRSRC(PBYTE prsrc, PIMAGE_RESOURCE_DIRECTORY pird, LONG Delta)
+/// <summary>
+/// https://stackoverflow.com/questions/49066842/resourceentries-rvas-of-a-resource-table-need-relocation-upon-copying-it-to-a-di
+/// </summary>
+/// <param name="pFirstResource"></param>
+/// <param name="pCurrentResource"></param>
+/// <param name="dwDelta"></param>
+static void AdjustResources(PBYTE pFirstResource, PIMAGE_RESOURCE_DIRECTORY pCurrentResource, DWORD dwDelta)
 {
-	if(DWORD NumberOfEntries = pird->NumberOfNamedEntries + pird->NumberOfIdEntries)
+	if(DWORD NumberOfEntries = pCurrentResource->NumberOfNamedEntries + pCurrentResource->NumberOfIdEntries)
 	{
-		PIMAGE_RESOURCE_DIRECTORY_ENTRY pirde = (PIMAGE_RESOURCE_DIRECTORY_ENTRY)(pird + 1);
+		PIMAGE_RESOURCE_DIRECTORY_ENTRY pirde = (PIMAGE_RESOURCE_DIRECTORY_ENTRY)(pCurrentResource + 1);
 
 		do
 		{
 			if(pirde->DataIsDirectory)
 			{
-				RelocateRSRC(prsrc,
-					(PIMAGE_RESOURCE_DIRECTORY)(prsrc + pirde->OffsetToDirectory),
-					Delta);
+				AdjustResources(pFirstResource,
+					(PIMAGE_RESOURCE_DIRECTORY)(pFirstResource + pirde->OffsetToDirectory),
+					dwDelta);
 			}
 			else
 			{
 				PIMAGE_RESOURCE_DATA_ENTRY data =
-					(PIMAGE_RESOURCE_DATA_ENTRY)(prsrc + pirde->OffsetToData);
+					(PIMAGE_RESOURCE_DATA_ENTRY)(pFirstResource + pirde->OffsetToData);
 
-				data->OffsetToData += Delta;
+				data->OffsetToData += dwDelta;
 			}
 
 		} while(pirde++, --NumberOfEntries);
@@ -179,11 +185,13 @@ void RelocateRSRC(PBYTE prsrc, PIMAGE_RESOURCE_DIRECTORY pird, LONG Delta)
 /// <summary>
 /// Update the address for all data directories and their specific structures.
 /// </summary>
-/// <param name="pDataDirectory">Pointer to the data directory.</param>
-/// <param name="dwAmount">Amount to adjust the addresses by.</param>
-/// <param name="adjAnythingAbove">Ajust addresses above this value.</param>
+/// <param name="pDosHeader">Pointer to the DOS header.</param>
+/// <param name="dwAdjVA">Amount to adjust VAs by.</param>
+/// <param name="dwAdjRaw">Amount to adjust raw pointers by.</param>
+/// <param name="adjAboveVA">Any VA above this will be adjusted.</param>
+/// <param name="adjAboveRawPtr">Any raw pointer above this will be adjusted.</param>
 /// <returns>Returns true on success, false otherwise.</returns>
-bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjAboveVA, DWORD adjAboveRawPtr)
+bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, DWORD dwAdjRaw, DWORD adjAboveVA, DWORD adjAboveRawPtr)
 {
 	IMAGE_NT_HEADERS* pNtHeader = NULL;
 	IMAGE_OPTIONAL_HEADER* pOptHeader = NULL;
@@ -212,7 +220,7 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 
 		if(pDataDir[bDirIndex].VirtualAddress > adjAboveVA)
 		{
-			pDataDir[bDirIndex].VirtualAddress += dwAdj;
+			pDataDir[bDirIndex].VirtualAddress += dwAdjVA;
 		}
 
 		// Directory specific updates...
@@ -221,15 +229,15 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 			auto pExportDir = (IMAGE_EXPORT_DIRECTORY*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress));
 			if(pExportDir->AddressOfFunctions > adjAboveVA)
 			{
-				pExportDir->AddressOfFunctions += dwAdj;
+				pExportDir->AddressOfFunctions += dwAdjVA;
 			}
 			if(pExportDir->AddressOfNames > adjAboveVA)
 			{
-				pExportDir->AddressOfNames += dwAdj;
+				pExportDir->AddressOfNames += dwAdjVA;
 			}
 			if(pExportDir->AddressOfNameOrdinals > adjAboveVA)
 			{
-				pExportDir->AddressOfNameOrdinals += dwAdj;
+				pExportDir->AddressOfNameOrdinals += dwAdjVA;
 			}
 		}
 		else if(IMAGE_DIRECTORY_ENTRY_IMPORT == bDirIndex)
@@ -239,11 +247,11 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 			{
 				if(pImportDir->OriginalFirstThunk > adjAboveVA)
 				{
-					pImportDir->OriginalFirstThunk += dwAdj;
+					pImportDir->OriginalFirstThunk += dwAdjVA;
 				}
 				if(pImportDir->FirstThunk > adjAboveVA)
 				{
-					pImportDir->FirstThunk += dwAdj;
+					pImportDir->FirstThunk += dwAdjVA;
 				}
 
 				++pImportDir;
@@ -252,96 +260,60 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 		else if(IMAGE_DIRECTORY_ENTRY_RESOURCE == bDirIndex)
 		{
 			IMAGE_DATA_DIRECTORY resourceDirectory = pNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE];
-
-			// If the resource directory is empty, exit as there are no resources.
 			if(resourceDirectory.Size == 0)
 			{
 				continue;
 			}
 
-			// Convert the RVA of the resources to a RAW offset
-			uintptr_t resourceBase = RVAToFileOffset(pNtHeader, resourceDirectory.VirtualAddress);
-			IMAGE_RESOURCE_DIRECTORY* pResourceDir = (IMAGE_RESOURCE_DIRECTORY*)((uintptr_t)pDosHeader + resourceBase);
+			DWORD dwResourceBase = RVAToFileOffset(pNtHeader, resourceDirectory.VirtualAddress);
+			IMAGE_RESOURCE_DIRECTORY* pResourceDir = (IMAGE_RESOURCE_DIRECTORY*)((uintptr_t)pDosHeader + dwResourceBase);
 
-			RelocateRSRC((PBYTE)pResourceDir, pResourceDir, dwAdj);
-			continue;
-
-			IMAGE_RESOURCE_DIRECTORY* pTypesDirectory = pResourceDir;
-			IMAGE_RESOURCE_DIRECTORY_ENTRY* pTypeEntries = (IMAGE_RESOURCE_DIRECTORY_ENTRY*)(pTypesDirectory + 1);
-
-			for(uintptr_t ti = 0; ti < pTypesDirectory->NumberOfNamedEntries + pTypesDirectory->NumberOfIdEntries; ti++)
+			AdjustResources((PBYTE)pResourceDir, pResourceDir, dwAdjVA);
+		}
+		else if(IMAGE_DIRECTORY_ENTRY_EXCEPTION == bDirIndex)
+		{
+			auto pExceptionDir = (IMAGE_RUNTIME_FUNCTION_ENTRY*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].VirtualAddress));
+			for(int x = 0; x < pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].Size / sizeof(IMAGE_RUNTIME_FUNCTION_ENTRY); ++x)
 			{
-				// Parse Names
-				IMAGE_RESOURCE_DIRECTORY_ENTRY* pTypeEntry = &pTypeEntries[ti];
-				IMAGE_RESOURCE_DIRECTORY* pNamesDirectory = (IMAGE_RESOURCE_DIRECTORY*)((uintptr_t)pDosHeader + (pTypeEntry->OffsetToDirectory & 0x7FFFFFFF) + resourceBase);
-				for(uintptr_t ni = 0; ni < pNamesDirectory->NumberOfNamedEntries + pNamesDirectory->NumberOfIdEntries; ni++)
+				if(pExceptionDir[x].BeginAddress > adjAboveVA)
 				{
-					// Parse Langs
-					IMAGE_RESOURCE_DIRECTORY_ENTRY* pNamesEntries = (IMAGE_RESOURCE_DIRECTORY_ENTRY*)(pNamesDirectory + 1);
-					IMAGE_RESOURCE_DIRECTORY_ENTRY* pNameEntry = &pNamesEntries[ni];
-					IMAGE_RESOURCE_DIRECTORY* pLangsDirectory = (IMAGE_RESOURCE_DIRECTORY*)((uintptr_t)pDosHeader + (pNameEntry->OffsetToDirectory & 0x7FFFFFFF) + resourceBase);
-					for(uintptr_t li = 0; li < pLangsDirectory->NumberOfNamedEntries + pLangsDirectory->NumberOfIdEntries; li++)
-					{
-						// Parse Data
-						IMAGE_RESOURCE_DIRECTORY_ENTRY* pLangsEntries = (IMAGE_RESOURCE_DIRECTORY_ENTRY*)(pLangsDirectory + 1);
-						IMAGE_RESOURCE_DIRECTORY_ENTRY* pLangEntry = &pLangsEntries[li];
-						IMAGE_RESOURCE_DATA_ENTRY* pDataEntry = (IMAGE_RESOURCE_DATA_ENTRY*)((uintptr_t)pDosHeader + resourceBase + pLangEntry->OffsetToData);
-
-						/*ResourceInfo entry = {};
-						entry.Language = pLangsEntries->Id;
-						entry.Size = pDataEntry->Size;
-						entry.Type = (PIMAGE_RESOURCE_DIR_STRING_U)(pTypeEntry->NameIsString) ? (PIMAGE_RESOURCE_DIR_STRING_U)((uintptr_t)pDosHeader + pTypeEntry->NameOffset + resourceBase) : (PIMAGE_RESOURCE_DIR_STRING_U)(pTypeEntry->Id);
-						entry.Name = (PIMAGE_RESOURCE_DIR_STRING_U)(pNameEntry->NameIsString) ? (PIMAGE_RESOURCE_DIR_STRING_U)((uintptr_t)pDosHeader + pNameEntry->NameOffset + resourceBase) : (PIMAGE_RESOURCE_DIR_STRING_U)(pNameEntry->Id);
-						entry.data = (BYTE*)pDosHeader + RVAToFileOffset(pNtHeader, pDataEntry->OffsetToData);
-						resources.push_back(entry);*/
-					}
+					pExceptionDir[x].BeginAddress += dwAdjVA;
+				}
+				if(pExceptionDir[x].EndAddress > adjAboveVA)
+				{
+					pExceptionDir[x].EndAddress += dwAdjVA;
+				}
+				if(pExceptionDir[x].UnwindInfoAddress > adjAboveVA)
+				{
+					pExceptionDir[x].UnwindInfoAddress += dwAdjVA;
 				}
 			}
 		}
-		//else if(IMAGE_DIRECTORY_ENTRY_EXCEPTION == bDirIndex)
-		//{
-		//	auto pExceptionDir = (IMAGE_RUNTIME_FUNCTION_ENTRY*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].VirtualAddress));
-		//	for(int x = 0; x < pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].Size / sizeof(IMAGE_RUNTIME_FUNCTION_ENTRY); ++x)
-		//	{
-		//		if(pExceptionDir[x].BeginAddress > adjAboveVA)
-		//		{
-		//			pExceptionDir[x].BeginAddress += dwAdj;
-		//		}
-		//		if(pExceptionDir[x].EndAddress > adjAboveVA)
-		//		{
-		//			pExceptionDir[x].EndAddress += dwAdj;
-		//		}
-		//		if(pExceptionDir[x].UnwindInfoAddress > adjAboveVA)
-		//		{
-		//			pExceptionDir[x].UnwindInfoAddress += dwAdj;
-		//		}
-		//	}
-		//}
-		//else if(IMAGE_DIRECTORY_ENTRY_SECURITY == bDirIndex) {}
-		//else if(IMAGE_DIRECTORY_ENTRY_BASERELOC == bDirIndex)
-		//{
-		//	auto pBaseReloc = (IMAGE_BASE_RELOCATION*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress));
-		//	while(pBaseReloc->VirtualAddress)
-		//	{
-		//		WORD* pReloc = (WORD*)(pBaseReloc + 1);
-		//		for(int x = 0; x < (pBaseReloc->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD); ++x)
-		//		{
-		//			if((*pReloc & 0xFFF) > adjAboveVA)
-		//			{
-		//				*pReloc += (WORD)dwAdj;
-		//			}
-		//			++pReloc;
-		//		}
+		else if(IMAGE_DIRECTORY_ENTRY_SECURITY == bDirIndex) {}
+		else if(IMAGE_DIRECTORY_ENTRY_BASERELOC == bDirIndex)
+		{
+			auto pBaseReloc = (IMAGE_BASE_RELOCATION*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress));
+			while(pBaseReloc->VirtualAddress)
+			{
+				WORD* pReloc = (WORD*)(pBaseReloc + 1);
+				for(int x = 0; x < (pBaseReloc->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD); ++x)
+				{
+					if((*pReloc & 0xFFF) > adjAboveVA)
+					{
+						*pReloc += (WORD)dwAdjVA;
+					}
+					++pReloc;
+				}
 
-		//		pBaseReloc = (IMAGE_BASE_RELOCATION*)((BYTE*)pBaseReloc + pBaseReloc->SizeOfBlock);
-		//	}
-		//}
+				pBaseReloc = (IMAGE_BASE_RELOCATION*)((BYTE*)pBaseReloc + pBaseReloc->SizeOfBlock);
+			}
+		}
 		//else if(IMAGE_DIRECTORY_ENTRY_DEBUG == bDirIndex)
 		//{
 		//	auto pDebugDir = (IMAGE_DEBUG_DIRECTORY*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress));
 		//	if(pDebugDir->AddressOfRawData > adjAboveVA)
 		//	{
-		//		pDebugDir->AddressOfRawData += dwAdj;
+		//		pDebugDir->AddressOfRawData += dwAdjVA;
 		//	}
 		//}
 		//else if(IMAGE_DIRECTORY_ENTRY_ARCHITECTURE == bDirIndex) {}
@@ -351,7 +323,7 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 		//	auto pTlsDir = (IMAGE_TLS_DIRECTORY*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress));
 		//	if(pTlsDir->AddressOfCallBacks > adjAboveVA)
 		//	{
-		//		pTlsDir->AddressOfCallBacks += dwAdj;
+		//		pTlsDir->AddressOfCallBacks += dwAdjVA;
 		//	}
 		//}
 		//else if(IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG == bDirIndex)
@@ -359,23 +331,23 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 		//	auto pLoadConfigDir = (IMAGE_LOAD_CONFIG_DIRECTORY*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG].VirtualAddress));
 		//	if(pLoadConfigDir->SecurityCookie > adjAboveVA)
 		//	{
-		//		pLoadConfigDir->SecurityCookie += dwAdj;
+		//		pLoadConfigDir->SecurityCookie += dwAdjVA;
 		//	}
 		//	if(pLoadConfigDir->SEHandlerTable > adjAboveVA)
 		//	{
-		//		pLoadConfigDir->SEHandlerTable += dwAdj;
+		//		pLoadConfigDir->SEHandlerTable += dwAdjVA;
 		//	}
 		//	if(pLoadConfigDir->GuardCFCheckFunctionPointer > adjAboveVA)
 		//	{
-		//		pLoadConfigDir->GuardCFCheckFunctionPointer += dwAdj;
+		//		pLoadConfigDir->GuardCFCheckFunctionPointer += dwAdjVA;
 		//	}
 		//	if(pLoadConfigDir->GuardCFFunctionTable > adjAboveVA)
 		//	{
-		//		pLoadConfigDir->GuardCFFunctionTable += dwAdj;
+		//		pLoadConfigDir->GuardCFFunctionTable += dwAdjVA;
 		//	}
 		//	if(pLoadConfigDir->GuardCFFunctionCount > adjAboveVA)
 		//	{
-		//		pLoadConfigDir->GuardCFFunctionCount += dwAdj;
+		//		pLoadConfigDir->GuardCFFunctionCount += dwAdjVA;
 		//	}
 
 		//	DWORD* pLockPrefixTable = (DWORD*)(pStart + RVAToFileOffset(pNtHeader, pLoadConfigDir->LockPrefixTable));
@@ -383,7 +355,7 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 		//	{
 		//		if(pLockPrefixTable[x] > adjAboveVA)
 		//		{
-		//			pLockPrefixTable[x] += dwAdj;
+		//			pLockPrefixTable[x] += dwAdjVA;
 		//		}
 		//	}
 
@@ -392,7 +364,7 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 		//	{
 		//		if(pSeHandlerTable[x] > adjAboveVA)
 		//		{
-		//			pSeHandlerTable[x] += dwAdj;
+		//			pSeHandlerTable[x] += dwAdjVA;
 		//		}
 		//	}
 
@@ -401,33 +373,33 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 		//	{
 		//		if(pGuardCfFunctionTable[x] > adjAboveVA)
 		//		{
-		//			pGuardCfFunctionTable[x] += dwAdj;
+		//			pGuardCfFunctionTable[x] += dwAdjVA;
 		//		}
 		//	}
 
 		//	if(pLoadConfigDir->GuardCFCheckFunctionPointer > adjAboveVA)
 		//	{
-		//		pLoadConfigDir->GuardCFCheckFunctionPointer += dwAdj;
+		//		pLoadConfigDir->GuardCFCheckFunctionPointer += dwAdjVA;
 		//	}
 
 		//	if(pLoadConfigDir->GuardCFDispatchFunctionPointer > adjAboveVA)
 		//	{
-		//		pLoadConfigDir->GuardCFDispatchFunctionPointer += dwAdj;
+		//		pLoadConfigDir->GuardCFDispatchFunctionPointer += dwAdjVA;
 		//	}
 
 		//	if(pLoadConfigDir->GuardCFFunctionTable > adjAboveVA)
 		//	{
-		//		pLoadConfigDir->GuardCFFunctionTable += dwAdj;
+		//		pLoadConfigDir->GuardCFFunctionTable += dwAdjVA;
 		//	}
 
 		//	if(pLoadConfigDir->GuardAddressTakenIatEntryTable > adjAboveVA)
 		//	{
-		//		pLoadConfigDir->GuardAddressTakenIatEntryTable += dwAdj;
+		//		pLoadConfigDir->GuardAddressTakenIatEntryTable += dwAdjVA;
 		//	}
 
 		//	if(pLoadConfigDir->GuardLongJumpTargetTable > adjAboveVA)
 		//	{
-		//		pLoadConfigDir->GuardLongJumpTargetTable += dwAdj;
+		//		pLoadConfigDir->GuardLongJumpTargetTable += dwAdjVA;
 		//	}
 		//}
 		//else if(IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT == bDirIndex)
@@ -438,15 +410,15 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 		//	{
 		//		if(pBoundImportDir->OffsetModuleName > adjAboveVA)
 		//		{
-		//			pBoundImportDir->OffsetModuleName += (WORD)dwAdj;
+		//			pBoundImportDir->OffsetModuleName += (WORD)dwAdjVA;
 		//		}
 		//		if(pBoundImportDir->TimeDateStamp > adjAboveVA)
 		//		{
-		//			pBoundImportDir->TimeDateStamp += dwAdj;
+		//			pBoundImportDir->TimeDateStamp += dwAdjVA;
 		//		}
 		//		if(pBoundImportDir->OffsetModuleName > adjAboveVA)
 		//		{
-		//			pBoundImportDir->OffsetModuleName += (WORD)dwAdj;
+		//			pBoundImportDir->OffsetModuleName += (WORD)dwAdjVA;
 		//		}
 
 		//		++pBoundImportDir;
@@ -459,7 +431,7 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 		//	{
 		//		if(pIatDir->u1.AddressOfData > adjAboveVA)
 		//		{
-		//			pIatDir->u1.AddressOfData += dwAdj;
+		//			pIatDir->u1.AddressOfData += dwAdjVA;
 		//		}
 
 		//		++pIatDir;
@@ -472,31 +444,31 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 		//	{
 		//		if(pDelayImportDir->DllNameRVA > adjAboveVA)
 		//		{
-		//			pDelayImportDir->DllNameRVA += dwAdj;
+		//			pDelayImportDir->DllNameRVA += dwAdjVA;
 		//		}
 		//		if(pDelayImportDir->ModuleHandleRVA > adjAboveVA)
 		//		{
-		//			pDelayImportDir->ModuleHandleRVA += dwAdj;
+		//			pDelayImportDir->ModuleHandleRVA += dwAdjVA;
 		//		}
 		//		if(pDelayImportDir->ImportAddressTableRVA > adjAboveVA)
 		//		{
-		//			pDelayImportDir->ImportAddressTableRVA += dwAdj;
+		//			pDelayImportDir->ImportAddressTableRVA += dwAdjVA;
 		//		}
 		//		if(pDelayImportDir->ImportNameTableRVA > adjAboveVA)
 		//		{
-		//			pDelayImportDir->ImportNameTableRVA += dwAdj;
+		//			pDelayImportDir->ImportNameTableRVA += dwAdjVA;
 		//		}
 		//		if(pDelayImportDir->BoundImportAddressTableRVA > adjAboveVA)
 		//		{
-		//			pDelayImportDir->BoundImportAddressTableRVA += dwAdj;
+		//			pDelayImportDir->BoundImportAddressTableRVA += dwAdjVA;
 		//		}
 		//		if(pDelayImportDir->UnloadInformationTableRVA > adjAboveVA)
 		//		{
-		//			pDelayImportDir->UnloadInformationTableRVA += dwAdj;
+		//			pDelayImportDir->UnloadInformationTableRVA += dwAdjVA;
 		//		}
 		//		if(pDelayImportDir->TimeDateStamp > adjAboveVA)
 		//		{
-		//			pDelayImportDir->TimeDateStamp += dwAdj;
+		//			pDelayImportDir->TimeDateStamp += dwAdjVA;
 		//		}
 
 		//		++pDelayImportDir;
@@ -508,31 +480,31 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 		//	auto pComDir = (IMAGE_COR20_HEADER*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].VirtualAddress));
 		//	if(pComDir->MetaData.VirtualAddress > adjAboveVA)
 		//	{
-		//		pComDir->MetaData.VirtualAddress += dwAdj;
+		//		pComDir->MetaData.VirtualAddress += dwAdjVA;
 		//	}
 		//	if(pComDir->Resources.VirtualAddress > adjAboveVA)
 		//	{
-		//		pComDir->Resources.VirtualAddress += dwAdj;
+		//		pComDir->Resources.VirtualAddress += dwAdjVA;
 		//	}
 		//	if(pComDir->StrongNameSignature.VirtualAddress > adjAboveVA)
 		//	{
-		//		pComDir->StrongNameSignature.VirtualAddress += dwAdj;
+		//		pComDir->StrongNameSignature.VirtualAddress += dwAdjVA;
 		//	}
 		//	if(pComDir->CodeManagerTable.VirtualAddress > adjAboveVA)
 		//	{
-		//		pComDir->CodeManagerTable.VirtualAddress += dwAdj;
+		//		pComDir->CodeManagerTable.VirtualAddress += dwAdjVA;
 		//	}
 		//	if(pComDir->VTableFixups.VirtualAddress > adjAboveVA)
 		//	{
-		//		pComDir->VTableFixups.VirtualAddress += dwAdj;
+		//		pComDir->VTableFixups.VirtualAddress += dwAdjVA;
 		//	}
 		//	if(pComDir->ExportAddressTableJumps.VirtualAddress > adjAboveVA)
 		//	{
-		//		pComDir->ExportAddressTableJumps.VirtualAddress += dwAdj;
+		//		pComDir->ExportAddressTableJumps.VirtualAddress += dwAdjVA;
 		//	}
 		//	if(pComDir->ManagedNativeHeader.VirtualAddress > adjAboveVA)
 		//	{
-		//		pComDir->ManagedNativeHeader.VirtualAddress += dwAdj;
+		//		pComDir->ManagedNativeHeader.VirtualAddress += dwAdjVA;
 		//	}
 		//}
 	}
