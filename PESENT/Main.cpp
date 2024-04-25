@@ -126,7 +126,7 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYT
 
 	// Update all data directories.
 	IMAGE_DATA_DIRECTORY* pDataDir = pOptHeader->DataDirectory;
-	if(!AdjustDataDirectories(pDosHeader, dwAdjVA, pSectionHeader->VirtualAddress, pSectionHeader->PointerToRawData))
+	if(!AdjustDataDirectories(pDosHeader, dwAdjVA, dwAdjRaw, pSectionHeader->VirtualAddress, pSectionHeader->PointerToRawData))
 	{
 		return {};
 	}
