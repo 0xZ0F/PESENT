@@ -14,11 +14,11 @@
 #include "DebugPrint.h"
 
 #ifdef _WIN64
-#define SRC_FILE "..\\x64\\Release\\ExampleTarget.exe"
-#define DST_FILE "..\\x64\\Release\\ExampleTarget_EXTENDED.exe"
+#define SRC_FILE "..\\x64\\Debug\\ExampleTarget.exe"
+#define DST_FILE "..\\x64\\Debug\\ExampleTarget_EXTENDED.exe"
 #else
-#define SRC_FILE "..\\Release\\ExampleTarget.exe"
-#define DST_FILE "..\\Release\\ExampleTarget_EXTENDED.exe"
+#define SRC_FILE "..\\Debug\\ExampleTarget.exe"
+#define DST_FILE "..\\Debug\\ExampleTarget_EXTENDED.exe"
 #endif
 
 #define SECTION_TO_MODIFY ".pesent"
