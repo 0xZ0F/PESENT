@@ -21,14 +21,14 @@ static inline T Align(T val, T alignment)
 bool GetPtrs(const BYTE* pData, IMAGE_DOS_HEADER** ppDosHeader = NULL, IMAGE_NT_HEADERS** ppNtHeader = NULL, IMAGE_OPTIONAL_HEADER** ppOptHeader = NULL)
 {
 	IMAGE_DOS_HEADER* pDos = (PIMAGE_DOS_HEADER)pData;
-	if(pDos->e_magic != IMAGE_DOS_SIGNATURE)
+	if (pDos->e_magic != IMAGE_DOS_SIGNATURE)
 	{
 		std::cerr << "Invalid DOS signature." << std::endl;
 		return false;
 	}
 
 	auto pNt = (IMAGE_NT_HEADERS*)(pData + pDos->e_lfanew);
-	if(pNt->Signature != IMAGE_NT_SIGNATURE)
+	if (pNt->Signature != IMAGE_NT_SIGNATURE)
 	{
 		std::cerr << "Invalid NT signature." << std::endl;
 		return false;
@@ -36,17 +36,17 @@ bool GetPtrs(const BYTE* pData, IMAGE_DOS_HEADER** ppDosHeader = NULL, IMAGE_NT_
 
 	IMAGE_OPTIONAL_HEADER* pOpt = &pNt->OptionalHeader;
 
-	if(ppDosHeader)
+	if (ppDosHeader)
 	{
 		*ppDosHeader = pDos;
 	}
 
-	if(ppNtHeader)
+	if (ppNtHeader)
 	{
 		*ppNtHeader = pNt;
 	}
 
-	if(ppOptHeader)
+	if (ppOptHeader)
 	{
 		*ppOptHeader = pOpt;
 	}
@@ -68,13 +68,13 @@ DWORD RVAToFileOffset(PIMAGE_NT_HEADERS pNTHeader, DWORD RVA)
 	firstSectionHeader = (PIMAGE_SECTION_HEADER)(((PBYTE)optionalHeader) + sizeOfOptionalHeader);
 
 	PIMAGE_SECTION_HEADER section = firstSectionHeader;
-	for(int i = 0; i < numberOfSections; i++)
+	for (int i = 0; i < numberOfSections; i++)
 	{
 
 		DWORD VirtualAddress = section->VirtualAddress;
 		DWORD VirtualSize = section->Misc.VirtualSize;
 
-		if(VirtualAddress <= RVA && RVA < VirtualAddress + VirtualSize)
+		if (VirtualAddress <= RVA && RVA < VirtualAddress + VirtualSize)
 		{
 			// RVA is in this section.
 			return (RVA - VirtualAddress) + section->PointerToRawData;
@@ -112,7 +112,7 @@ bool UpdateSections(IMAGE_NT_HEADERS* pNtHeader)
 
 	// Set the first section's information.
 	pSectionHeader->VirtualAddress = Align(pOptHeader->SizeOfHeaders, pOptHeader->SectionAlignment);
-	if(pSectionHeader->SizeOfRawData)
+	if (pSectionHeader->SizeOfRawData)
 	{
 		// First section's pointer is set to after the headers.
 		pSectionHeader->PointerToRawData = Align(pOptHeader->SizeOfHeaders, pOptHeader->FileAlignment);
@@ -124,7 +124,7 @@ bool UpdateSections(IMAGE_NT_HEADERS* pNtHeader)
 	}
 
 	// Update VA and PTRD for all sections.
-	for(WORD x = 1; x < pNtHeader->FileHeader.NumberOfSections; ++x)
+	for (WORD x = 1; x < pNtHeader->FileHeader.NumberOfSections; ++x)
 	{
 		IMAGE_SECTION_HEADER* pPrevSection = &IMAGE_FIRST_SECTION(pNtHeader)[x - 1];
 		pSectionHeader[x].VirtualAddress = Align(pPrevSection->VirtualAddress + pPrevSection->Misc.VirtualSize, pOptHeader->SectionAlignment);
@@ -132,12 +132,12 @@ bool UpdateSections(IMAGE_NT_HEADERS* pNtHeader)
 		// This helps handling with sections that have a raw size of 0.
 		// Specifically, with keeping track of the hext available spot.
 		DWORD dwNextPtrToRaw = Align(pPrevSection->PointerToRawData + pPrevSection->SizeOfRawData, pOptHeader->FileAlignment);
-		if(!dwNextPtrToRaw)
+		if (!dwNextPtrToRaw)
 		{
 			dwNextPtrToRaw = pOptHeader->SizeOfHeaders;
 		}
 
-		if(pSectionHeader[x].SizeOfRawData)
+		if (pSectionHeader[x].SizeOfRawData)
 		{
 			pSectionHeader[x].PointerToRawData = dwNextPtrToRaw;
 		}
@@ -158,13 +158,13 @@ bool UpdateSections(IMAGE_NT_HEADERS* pNtHeader)
 /// <param name="dwDelta"></param>
 static void AdjustResources(PBYTE pFirstResource, PIMAGE_RESOURCE_DIRECTORY pCurrentResource, DWORD dwDelta)
 {
-	if(DWORD NumberOfEntries = pCurrentResource->NumberOfNamedEntries + pCurrentResource->NumberOfIdEntries)
+	if (DWORD NumberOfEntries = pCurrentResource->NumberOfNamedEntries + pCurrentResource->NumberOfIdEntries)
 	{
 		PIMAGE_RESOURCE_DIRECTORY_ENTRY pirde = (PIMAGE_RESOURCE_DIRECTORY_ENTRY)(pCurrentResource + 1);
 
 		do
 		{
-			if(pirde->DataIsDirectory)
+			if (pirde->DataIsDirectory)
 			{
 				AdjustResources(pFirstResource,
 					(PIMAGE_RESOURCE_DIRECTORY)(pFirstResource + pirde->OffsetToDirectory),
@@ -178,7 +178,7 @@ static void AdjustResources(PBYTE pFirstResource, PIMAGE_RESOURCE_DIRECTORY pCur
 				data->OffsetToData += dwDelta;
 			}
 
-		} while(pirde++, --NumberOfEntries);
+		} while (pirde++, --NumberOfEntries);
 	}
 }
 
@@ -196,13 +196,13 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, DWORD dw
 	IMAGE_NT_HEADERS* pNtHeader = NULL;
 	IMAGE_OPTIONAL_HEADER* pOptHeader = NULL;
 	IMAGE_DATA_DIRECTORY* pDataDirectory = NULL;
-	if(!GetPtrs((BYTE*)pDosHeader, NULL, &pNtHeader, &pOptHeader))
+	if (!GetPtrs((BYTE*)pDosHeader, NULL, &pNtHeader, &pOptHeader))
 	{
 		return false;
 	}
 	pDataDirectory = pOptHeader->DataDirectory;
 
-	if(pDosHeader->e_magic != IMAGE_DOS_SIGNATURE || pNtHeader->Signature != IMAGE_NT_SIGNATURE)
+	if (pDosHeader->e_magic != IMAGE_DOS_SIGNATURE || pNtHeader->Signature != IMAGE_NT_SIGNATURE)
 	{
 		return false;
 	}
@@ -210,46 +210,46 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, DWORD dw
 	BYTE* pStart = (BYTE*)pDosHeader;
 
 	IMAGE_DATA_DIRECTORY* pDataDir = pOptHeader->DataDirectory;
-	for(BYTE bDirIndex = 0; bDirIndex < IMAGE_NUMBEROF_DIRECTORY_ENTRIES; ++bDirIndex)
+	for (BYTE bDirIndex = 0; bDirIndex < IMAGE_NUMBEROF_DIRECTORY_ENTRIES; ++bDirIndex)
 	{
 		// Check for empty entry.
-		if(!pDataDir[bDirIndex].VirtualAddress)
+		if (!pDataDir[bDirIndex].VirtualAddress)
 		{
 			continue;
 		}
 
-		if(pDataDir[bDirIndex].VirtualAddress > adjAboveVA)
+		if (pDataDir[bDirIndex].VirtualAddress > adjAboveVA)
 		{
 			pDataDir[bDirIndex].VirtualAddress += dwAdjVA;
 		}
 
 		// Directory specific updates...
-		if(IMAGE_DIRECTORY_ENTRY_EXPORT == bDirIndex)
+		if (IMAGE_DIRECTORY_ENTRY_EXPORT == bDirIndex)
 		{
 			auto pExportDir = (IMAGE_EXPORT_DIRECTORY*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress));
-			if(pExportDir->AddressOfFunctions > adjAboveVA)
+			if (pExportDir->AddressOfFunctions > adjAboveVA)
 			{
 				pExportDir->AddressOfFunctions += dwAdjVA;
 			}
-			if(pExportDir->AddressOfNames > adjAboveVA)
+			if (pExportDir->AddressOfNames > adjAboveVA)
 			{
 				pExportDir->AddressOfNames += dwAdjVA;
 			}
-			if(pExportDir->AddressOfNameOrdinals > adjAboveVA)
+			if (pExportDir->AddressOfNameOrdinals > adjAboveVA)
 			{
 				pExportDir->AddressOfNameOrdinals += dwAdjVA;
 			}
 		}
-		else if(IMAGE_DIRECTORY_ENTRY_IMPORT == bDirIndex)
+		else if (IMAGE_DIRECTORY_ENTRY_IMPORT == bDirIndex)
 		{
 			auto pImportDir = (IMAGE_IMPORT_DESCRIPTOR*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress));
-			while(pImportDir->Name)
+			while (pImportDir->Name)
 			{
-				if(pImportDir->OriginalFirstThunk > adjAboveVA)
+				if (pImportDir->OriginalFirstThunk > adjAboveVA)
 				{
 					pImportDir->OriginalFirstThunk += dwAdjVA;
 				}
-				if(pImportDir->FirstThunk > adjAboveVA)
+				if (pImportDir->FirstThunk > adjAboveVA)
 				{
 					pImportDir->FirstThunk += dwAdjVA;
 				}
@@ -257,10 +257,10 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, DWORD dw
 				++pImportDir;
 			}
 		}
-		else if(IMAGE_DIRECTORY_ENTRY_RESOURCE == bDirIndex)
+		else if (IMAGE_DIRECTORY_ENTRY_RESOURCE == bDirIndex)
 		{
 			IMAGE_DATA_DIRECTORY resourceDirectory = pNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE];
-			if(resourceDirectory.Size == 0)
+			if (resourceDirectory.Size == 0)
 			{
 				continue;
 			}
@@ -270,42 +270,37 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, DWORD dw
 
 			AdjustResources((PBYTE)pResourceDir, pResourceDir, dwAdjVA);
 		}
-		else if(IMAGE_DIRECTORY_ENTRY_EXCEPTION == bDirIndex)
+		else if (IMAGE_DIRECTORY_ENTRY_EXCEPTION == bDirIndex)
 		{
 			auto pExceptionDir = (IMAGE_RUNTIME_FUNCTION_ENTRY*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].VirtualAddress));
-			for(int x = 0; x < pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].Size / sizeof(IMAGE_RUNTIME_FUNCTION_ENTRY); ++x)
+			for (int x = 0; x < pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].Size / sizeof(IMAGE_RUNTIME_FUNCTION_ENTRY); ++x)
 			{
-				if(pExceptionDir[x].BeginAddress > adjAboveVA)
+				if (pExceptionDir[x].BeginAddress > adjAboveVA)
 				{
 					pExceptionDir[x].BeginAddress += dwAdjVA;
 				}
-				if(pExceptionDir[x].EndAddress > adjAboveVA)
+				if (pExceptionDir[x].EndAddress > adjAboveVA)
 				{
 					pExceptionDir[x].EndAddress += dwAdjVA;
 				}
-				if(pExceptionDir[x].UnwindInfoAddress > adjAboveVA)
+				if (pExceptionDir[x].UnwindInfoAddress > adjAboveVA)
 				{
 					pExceptionDir[x].UnwindInfoAddress += dwAdjVA;
 				}
 			}
 		}
-		else if(IMAGE_DIRECTORY_ENTRY_SECURITY == bDirIndex) {}
-		else if(IMAGE_DIRECTORY_ENTRY_BASERELOC == bDirIndex)
+		else if (IMAGE_DIRECTORY_ENTRY_SECURITY == bDirIndex) {}
+		else if (IMAGE_DIRECTORY_ENTRY_BASERELOC == bDirIndex)
 		{
 			auto pBaseReloc = (IMAGE_BASE_RELOCATION*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress));
-			while(pBaseReloc->VirtualAddress)
-			{
-				WORD* pReloc = (WORD*)(pBaseReloc + 1);
-				for(int x = 0; x < (pBaseReloc->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD); ++x)
-				{
-					if((*pReloc & 0xFFF) > adjAboveVA)
-					{
-						*pReloc += (WORD)dwAdjVA;
-					}
-					++pReloc;
-				}
 
+			while (pBaseReloc->VirtualAddress)
+			{
 				pBaseReloc = (IMAGE_BASE_RELOCATION*)((BYTE*)pBaseReloc + pBaseReloc->SizeOfBlock);
+				if (pBaseReloc->VirtualAddress > adjAboveVA)
+				{
+					pBaseReloc->VirtualAddress += dwAdjVA;
+				}
 			}
 		}
 		//else if(IMAGE_DIRECTORY_ENTRY_DEBUG == bDirIndex)
@@ -326,82 +321,52 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, DWORD dw
 		//		pTlsDir->AddressOfCallBacks += dwAdjVA;
 		//	}
 		//}
-		//else if(IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG == bDirIndex)
-		//{
-		//	auto pLoadConfigDir = (IMAGE_LOAD_CONFIG_DIRECTORY*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG].VirtualAddress));
-		//	if(pLoadConfigDir->SecurityCookie > adjAboveVA)
-		//	{
-		//		pLoadConfigDir->SecurityCookie += dwAdjVA;
-		//	}
-		//	if(pLoadConfigDir->SEHandlerTable > adjAboveVA)
-		//	{
-		//		pLoadConfigDir->SEHandlerTable += dwAdjVA;
-		//	}
-		//	if(pLoadConfigDir->GuardCFCheckFunctionPointer > adjAboveVA)
-		//	{
-		//		pLoadConfigDir->GuardCFCheckFunctionPointer += dwAdjVA;
-		//	}
-		//	if(pLoadConfigDir->GuardCFFunctionTable > adjAboveVA)
-		//	{
-		//		pLoadConfigDir->GuardCFFunctionTable += dwAdjVA;
-		//	}
-		//	if(pLoadConfigDir->GuardCFFunctionCount > adjAboveVA)
-		//	{
-		//		pLoadConfigDir->GuardCFFunctionCount += dwAdjVA;
-		//	}
+		else if (IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG == bDirIndex)
+		{
+			auto pLoadConfigDir = (IMAGE_LOAD_CONFIG_DIRECTORY*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG].VirtualAddress));
+			if (pLoadConfigDir->SecurityCookie - pOptHeader->ImageBase > adjAboveVA)
+			{
+				pLoadConfigDir->SecurityCookie += dwAdjVA;
+			}
 
-		//	DWORD* pLockPrefixTable = (DWORD*)(pStart + RVAToFileOffset(pNtHeader, pLoadConfigDir->LockPrefixTable));
-		//	for(int x = 0; pLockPrefixTable[x]; ++x)
-		//	{
-		//		if(pLockPrefixTable[x] > adjAboveVA)
-		//		{
-		//			pLockPrefixTable[x] += dwAdjVA;
-		//		}
-		//	}
+			if (pLoadConfigDir->GuardCFCheckFunctionPointer - pOptHeader->ImageBase > adjAboveVA)
+			{
+				pLoadConfigDir->GuardCFCheckFunctionPointer += dwAdjVA;
+			}
 
-		//	DWORD* pSeHandlerTable = (DWORD*)(pStart + RVAToFileOffset(pNtHeader, pLoadConfigDir->SEHandlerTable));
-		//	for(int x = 0; pSeHandlerTable[x]; ++x)
-		//	{
-		//		if(pSeHandlerTable[x] > adjAboveVA)
-		//		{
-		//			pSeHandlerTable[x] += dwAdjVA;
-		//		}
-		//	}
+			if (pLoadConfigDir->GuardCFDispatchFunctionPointer - pOptHeader->ImageBase > adjAboveVA)
+			{
+				pLoadConfigDir->GuardCFDispatchFunctionPointer += dwAdjVA;
+			}
 
-		//	DWORD* pGuardCfFunctionTable = (DWORD*)(pStart + RVAToFileOffset(pNtHeader, pLoadConfigDir->GuardCFFunctionTable));
-		//	for(int x = 0; pGuardCfFunctionTable[x]; ++x)
-		//	{
-		//		if(pGuardCfFunctionTable[x] > adjAboveVA)
-		//		{
-		//			pGuardCfFunctionTable[x] += dwAdjVA;
-		//		}
-		//	}
+			uintptr_t* pTmp = (uintptr_t*)(pStart + RVAToFileOffset(pNtHeader, pLoadConfigDir->GuardCFCheckFunctionPointer - pOptHeader->ImageBase));
+			for (size_t x = 0; x < 0x100 / sizeof(void*); ++x, ++pTmp)
+			{
+				if (!*pTmp)
+				{
+					continue;
+				}
 
-		//	if(pLoadConfigDir->GuardCFCheckFunctionPointer > adjAboveVA)
-		//	{
-		//		pLoadConfigDir->GuardCFCheckFunctionPointer += dwAdjVA;
-		//	}
+				if (*pTmp - pOptHeader->ImageBase > adjAboveVA)
+				{
+					*pTmp += dwAdjVA;
+				}
+			}
 
-		//	if(pLoadConfigDir->GuardCFDispatchFunctionPointer > adjAboveVA)
-		//	{
-		//		pLoadConfigDir->GuardCFDispatchFunctionPointer += dwAdjVA;
-		//	}
+			pTmp = (uintptr_t*)(pStart + RVAToFileOffset(pNtHeader, pLoadConfigDir->GuardCFDispatchFunctionPointer - pOptHeader->ImageBase));
+			for (size_t x = 0; x < 0x100 / sizeof(void*); ++x, ++pTmp)
+			{
+				if (!*pTmp)
+				{
+					continue;
+				}
 
-		//	if(pLoadConfigDir->GuardCFFunctionTable > adjAboveVA)
-		//	{
-		//		pLoadConfigDir->GuardCFFunctionTable += dwAdjVA;
-		//	}
-
-		//	if(pLoadConfigDir->GuardAddressTakenIatEntryTable > adjAboveVA)
-		//	{
-		//		pLoadConfigDir->GuardAddressTakenIatEntryTable += dwAdjVA;
-		//	}
-
-		//	if(pLoadConfigDir->GuardLongJumpTargetTable > adjAboveVA)
-		//	{
-		//		pLoadConfigDir->GuardLongJumpTargetTable += dwAdjVA;
-		//	}
-		//}
+				if (*pTmp - pOptHeader->ImageBase > adjAboveVA)
+				{
+					*pTmp += dwAdjVA;
+				}
+			}
+		}
 		//else if(IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT == bDirIndex)
 		//{
 		//	// This will probably cause issues since WORD vs DWORD and WORD max.
