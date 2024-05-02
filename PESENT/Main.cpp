@@ -14,14 +14,15 @@
 #include "DebugPrint.h"
 
 #ifdef _WIN64
-#define SRC_FILE "..\\x64\\Debug\\ExampleTarget.exe"
-#define DST_FILE "..\\x64\\Debug\\ExampleTarget_EXTENDED.exe"
+#define SRC_FILE "..\\x64\\Release\\ExampleTarget.exe"
+#define DST_FILE "..\\x64\\Release\\ExampleTarget_EXTENDED.exe"
 #else
-#define SRC_FILE "..\\Debug\\ExampleTarget.exe"
-#define DST_FILE "..\\Debug\\ExampleTarget_EXTENDED.exe"
+#define SRC_FILE "..\\Release\\ExampleTarget.exe"
+#define DST_FILE "..\\Release\\ExampleTarget_EXTENDED.exe"
 #endif
 
 #define SECTION_TO_MODIFY ".pesent"
+#define SECTION_FILL "Z0F"
 
 /// <summary>
 /// Set a section's data. This will resize the section and update the headers if needed.
@@ -30,10 +31,15 @@
 /// <param name="newSectionData">New section's data. Make sure this is sized exactly.</param>
 /// <param name="sectionName">Name of the section to modify.</param>
 /// <returns>Returns the new PE data on success, empty vector otherwise.</returns>
-std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYTE>& newSectionData, std::string sectionName)
+std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, std::vector<BYTE> newSectionData, std::string sectionName)
 {
 	/// TODO: Update checksums.
 	/// TODO: Modify or zero the rich header.
+
+	if (newSectionData.size() > MAXDWORD)
+	{
+		return {};
+	}
 
 	IMAGE_DOS_HEADER* pDosHeader = NULL;
 	IMAGE_NT_HEADERS* pNtHeader = NULL;
@@ -68,7 +74,14 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYT
 		return {};
 	}
 
-	DWORD dwNewSizeAligned = Align((DWORD)newSectionData.size(), pOptHeader->FileAlignment);
+	DWORD dwNewSizeOriginal = (DWORD)newSectionData.size();
+	{
+		DWORD dwSizeNeeded = Align((DWORD)newSectionData.size(), pOptHeader->FileAlignment);
+		newSectionData.resize(dwSizeNeeded);
+		printf("New section data will be %zx bytes long.\n", newSectionData.size());
+	}
+
+	DWORD dwNewSizeAligned = (DWORD)newSectionData.size();
 	DWORD dwOriginalSize = pSectionHeader->Misc.VirtualSize;
 	DWORD dwOriginalSizeAligned = Align(dwOriginalSize, pOptHeader->SectionAlignment);
 	DWORD dwAdjRaw = dwNewSizeAligned - dwOriginalSizeAligned;
@@ -106,7 +119,7 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYT
 
 	// Update the section.
 	DWORD dwAdjVA = Align(pSectionHeader->Misc.VirtualSize, pOptHeader->SectionAlignment);
-	pSectionHeader->Misc.VirtualSize = (DWORD)newSectionData.size();
+	pSectionHeader->Misc.VirtualSize = dwNewSizeOriginal;
 	dwAdjVA = Align(pSectionHeader->Misc.VirtualSize, pOptHeader->SectionAlignment) - dwAdjVA;
 
 	pSectionHeader->SizeOfRawData = dwNewSizeAligned;
@@ -135,7 +148,12 @@ std::vector<BYTE> SetSectionData(std::vector<BYTE> peData, const std::vector<BYT
 	return peData;
 }
 
-inline bool DoAppend(std::vector<BYTE>& peData)
+/// <summary>
+/// Append a section to the PE.
+/// </summary>
+/// <param name="peData"></param>
+/// <returns>Returns true on success, false otherwise.</returns>
+static inline bool DoAppend(std::vector<BYTE>& peData)
 {
 	char sectionFill = 'A';
 	size_t numToAdd = 10;
@@ -157,17 +175,19 @@ inline bool DoAppend(std::vector<BYTE>& peData)
 	return true;
 }
 
-inline bool DoExtend(std::vector<BYTE>& peData)
+/// <summary>
+/// Extend a section's (SECTION_TO_MODIFY) data even if it's not the last section.
+/// This won't work for most situations.
+/// </summary>
+/// <param name="peData"></param>
+/// <returns>Returns true on success, false otherwise.</returns>
+static inline bool DoExtend(std::vector<BYTE>& peData)
 {
-	std::vector<BYTE> newData(0x10000);
-	memset(newData.data(), 'Z', newData.size());
-	//for(size_t x = 0; x < newData.size(); x += 4)
-	//{
-	//	newData[x] = 'Z';
-	//	newData[x + 1] = '0';
-	//	newData[x + 2] = 'F';
-	//	newData[x + 3] = 0;
-	//}
+	std::vector<BYTE> newData(0x13433);
+	for(size_t x = 0; x < newData.size() - sizeof(SECTION_FILL); x += 4)
+	{
+		CopyMemory(&newData[x], SECTION_FILL, sizeof(SECTION_FILL));
+	}
 
 	peData = SetSectionData(peData, newData, SECTION_TO_MODIFY);
 	if(peData.empty())
@@ -179,7 +199,7 @@ inline bool DoExtend(std::vector<BYTE>& peData)
 	return true;
 }
 
-inline bool RunResult(const char* pszFile)
+static inline bool RunResult(const char* pszFile)
 {
 	STARTUPINFOA si = { sizeof(si) };
 	PROCESS_INFORMATION pi = { 0 };
@@ -210,7 +230,6 @@ inline bool RunResult(const char* pszFile)
 
 int main()
 {
-	// Read file
 	std::vector<BYTE> fileData = ReadFile(SRC_FILE);
 	if(fileData.empty())
 	{

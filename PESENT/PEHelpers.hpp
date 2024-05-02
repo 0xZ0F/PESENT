@@ -2,7 +2,6 @@
 
 #include <string>
 #include <iostream>
-#include <functional>
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -58,7 +57,7 @@ bool GetPtrs(const BYTE* pData, IMAGE_DOS_HEADER** ppDosHeader = NULL, IMAGE_NT_
 
 // https://stackoverflow.com/questions/45212489/image-section-headers-virtualaddress-and-pointertorawdata-difference
 // https://pastebin.com/pttDSTRz
-DWORD RVAToFileOffset(PIMAGE_NT_HEADERS pNTHeader, DWORD RVA)
+DWORD RVAToFileOffset(IMAGE_NT_HEADERS* pNTHeader, DWORD RVA)
 {
 	PIMAGE_FILE_HEADER fileHeader = &(pNTHeader->FileHeader);
 	PIMAGE_OPTIONAL_HEADER optionalHeader = &(pNTHeader->OptionalHeader);
@@ -389,13 +388,6 @@ static inline bool AdjustBaseReloc(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, 
 				{
 					*patchedBuffer += dwAdjVA;
 				}
-				/*if(*patchedBuffer)
-
-				ReadProcessMemory(destProcess, (LPCVOID)((DWORD)destImageBase + patchAddress), &patchedBuffer, sizeof(DWORD), &bytesRead);
-				patchedBuffer += deltaImageBase;
-
-				WriteProcessMemory(destProcess, (PVOID)((DWORD)destImageBase + patchAddress), &patchedBuffer, sizeof(DWORD), fileBytesRead);
-				int a = GetLastError();*/
 			}
 		}
 	}
@@ -462,7 +454,7 @@ static inline bool AdjustLoadConfig(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA,
 		pLoadConfigDir->GuardCFDispatchFunctionPointer += dwAdjVA;
 	}
 
-	uintptr_t* pTmp = (uintptr_t*)(pStart + RVAToFileOffset(pNtHeader, pLoadConfigDir->GuardCFCheckFunctionPointer - pOptHeader->ImageBase));
+	uintptr_t* pTmp = (uintptr_t*)(pStart + RVAToFileOffset(pNtHeader, (DWORD)(pLoadConfigDir->GuardCFCheckFunctionPointer - pOptHeader->ImageBase)));
 	for (size_t x = 0; x < 0x100 / sizeof(void*); ++x, ++pTmp)
 	{
 		if (!*pTmp)
@@ -470,14 +462,14 @@ static inline bool AdjustLoadConfig(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA,
 			continue;
 		}
 
-		DWORD val = *pTmp - pOptHeader->ImageBase;
+		DWORD val = (DWORD)(*pTmp - pOptHeader->ImageBase);
 		if (RVAToFileOffset(pNtHeader, val) && val > adjAboveVA)
 		{
 			*pTmp += dwAdjVA;
 		}
 	}
 
-	pTmp = (uintptr_t*)(pStart + RVAToFileOffset(pNtHeader, pLoadConfigDir->GuardCFDispatchFunctionPointer - pOptHeader->ImageBase));
+	pTmp = (uintptr_t*)(pStart + RVAToFileOffset(pNtHeader, (DWORD)(pLoadConfigDir->GuardCFDispatchFunctionPointer - pOptHeader->ImageBase)));
 	for (size_t x = 0; x < 0x100 / sizeof(void*); ++x, ++pTmp)
 	{
 		if (!*pTmp)
@@ -485,7 +477,7 @@ static inline bool AdjustLoadConfig(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA,
 			continue;
 		}
 
-		DWORD val = *pTmp - pOptHeader->ImageBase;
+		DWORD val = (DWORD)(*pTmp - pOptHeader->ImageBase);
 		if (RVAToFileOffset(pNtHeader, val) && val > adjAboveVA)
 		{
 			*pTmp += dwAdjVA;
@@ -526,29 +518,19 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, DWORD dw
 		}
 	}
 
-	using func_t = std::function<bool(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, DWORD dwAdjRaw, DWORD adjAboveVA, DWORD adjAboveRawPtr)>;
-	std::array<func_t, IMAGE_NUMBEROF_DIRECTORY_ENTRIES> funcs = {
-		AdjustExports,
-		AdjustImports,
-		AdjustResources,
-		AdjustExceptions,
-		AdjustBaseReloc,
-		AdjustDebug,
-		AdjustLoadConfig,
-	};
-
-	for (auto f : funcs)
+	if (!AdjustBaseReloc(pDosHeader, dwAdjVA, dwAdjRaw, adjAboveVA, adjAboveRawPtr))
 	{
-		if (!f)
-		{
-			continue;
-		}
-
-		if (!f(pDosHeader, dwAdjVA, dwAdjRaw, adjAboveVA, adjAboveRawPtr))
-		{
-			return false;
-		}
+		return false;
 	}
+
+	if (!AdjustResources(pDosHeader, dwAdjVA, dwAdjRaw, adjAboveVA, adjAboveRawPtr))
+	{
+		return false;
+	}
+
+	///
+	/// The others are not needed for this sample. See the README.
+	///
 
 	return true;
 }
