@@ -534,7 +534,7 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, DWORD dw
 		AdjustExceptions,
 		AdjustBaseReloc,
 		AdjustDebug,
-		AdjustLoadConfig
+		AdjustLoadConfig,
 	};
 
 	for (auto f : funcs)
