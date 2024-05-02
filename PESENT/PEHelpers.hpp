@@ -528,7 +528,13 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, DWORD dw
 
 	using func_t = std::function<bool(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, DWORD dwAdjRaw, DWORD adjAboveVA, DWORD adjAboveRawPtr)>;
 	std::array<func_t, IMAGE_NUMBEROF_DIRECTORY_ENTRIES> funcs = {
-		AdjustExports, AdjustImports, AdjustResources, AdjustExceptions, AdjustBaseReloc, AdjustDebug, AdjustLoadConfig
+		AdjustExports,
+		AdjustImports,
+		AdjustResources,
+		AdjustExceptions,
+		AdjustBaseReloc,
+		AdjustDebug,
+		AdjustLoadConfig
 	};
 
 	for (auto f : funcs)
