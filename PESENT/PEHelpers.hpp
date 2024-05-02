@@ -21,14 +21,14 @@ static inline T Align(T val, T alignment)
 bool GetPtrs(const BYTE* pData, IMAGE_DOS_HEADER** ppDosHeader = NULL, IMAGE_NT_HEADERS** ppNtHeader = NULL, IMAGE_OPTIONAL_HEADER** ppOptHeader = NULL)
 {
 	IMAGE_DOS_HEADER* pDos = (PIMAGE_DOS_HEADER)pData;
-	if(pDos->e_magic != IMAGE_DOS_SIGNATURE)
+	if (pDos->e_magic != IMAGE_DOS_SIGNATURE)
 	{
 		std::cerr << "Invalid DOS signature." << std::endl;
 		return false;
 	}
 
 	auto pNt = (IMAGE_NT_HEADERS*)(pData + pDos->e_lfanew);
-	if(pNt->Signature != IMAGE_NT_SIGNATURE)
+	if (pNt->Signature != IMAGE_NT_SIGNATURE)
 	{
 		std::cerr << "Invalid NT signature." << std::endl;
 		return false;
@@ -36,17 +36,17 @@ bool GetPtrs(const BYTE* pData, IMAGE_DOS_HEADER** ppDosHeader = NULL, IMAGE_NT_
 
 	IMAGE_OPTIONAL_HEADER* pOpt = &pNt->OptionalHeader;
 
-	if(ppDosHeader)
+	if (ppDosHeader)
 	{
 		*ppDosHeader = pDos;
 	}
 
-	if(ppNtHeader)
+	if (ppNtHeader)
 	{
 		*ppNtHeader = pNt;
 	}
 
-	if(ppOptHeader)
+	if (ppOptHeader)
 	{
 		*ppOptHeader = pOpt;
 	}
@@ -68,13 +68,13 @@ DWORD RVAToFileOffset(PIMAGE_NT_HEADERS pNTHeader, DWORD RVA)
 	firstSectionHeader = (PIMAGE_SECTION_HEADER)(((PBYTE)optionalHeader) + sizeOfOptionalHeader);
 
 	PIMAGE_SECTION_HEADER section = firstSectionHeader;
-	for(int i = 0; i < numberOfSections; i++)
+	for (int i = 0; i < numberOfSections; i++)
 	{
 
 		DWORD VirtualAddress = section->VirtualAddress;
 		DWORD VirtualSize = section->Misc.VirtualSize;
 
-		if(VirtualAddress <= RVA && RVA < VirtualAddress + VirtualSize)
+		if (VirtualAddress <= RVA && RVA < VirtualAddress + VirtualSize)
 		{
 			// RVA is in this section.
 			return (RVA - VirtualAddress) + section->PointerToRawData;
@@ -112,7 +112,7 @@ bool UpdateSections(IMAGE_NT_HEADERS* pNtHeader)
 
 	// Set the first section's information.
 	pSectionHeader->VirtualAddress = Align(pOptHeader->SizeOfHeaders, pOptHeader->SectionAlignment);
-	if(pSectionHeader->SizeOfRawData)
+	if (pSectionHeader->SizeOfRawData)
 	{
 		// First section's pointer is set to after the headers.
 		pSectionHeader->PointerToRawData = Align(pOptHeader->SizeOfHeaders, pOptHeader->FileAlignment);
@@ -124,7 +124,7 @@ bool UpdateSections(IMAGE_NT_HEADERS* pNtHeader)
 	}
 
 	// Update VA and PTRD for all sections.
-	for(WORD x = 1; x < pNtHeader->FileHeader.NumberOfSections; ++x)
+	for (WORD x = 1; x < pNtHeader->FileHeader.NumberOfSections; ++x)
 	{
 		IMAGE_SECTION_HEADER* pPrevSection = &IMAGE_FIRST_SECTION(pNtHeader)[x - 1];
 		pSectionHeader[x].VirtualAddress = Align(pPrevSection->VirtualAddress + pPrevSection->Misc.VirtualSize, pOptHeader->SectionAlignment);
@@ -132,12 +132,12 @@ bool UpdateSections(IMAGE_NT_HEADERS* pNtHeader)
 		// This helps handling with sections that have a raw size of 0.
 		// Specifically, with keeping track of the hext available spot.
 		DWORD dwNextPtrToRaw = Align(pPrevSection->PointerToRawData + pPrevSection->SizeOfRawData, pOptHeader->FileAlignment);
-		if(!dwNextPtrToRaw)
+		if (!dwNextPtrToRaw)
 		{
 			dwNextPtrToRaw = pOptHeader->SizeOfHeaders;
 		}
 
-		if(pSectionHeader[x].SizeOfRawData)
+		if (pSectionHeader[x].SizeOfRawData)
 		{
 			pSectionHeader[x].PointerToRawData = dwNextPtrToRaw;
 		}
@@ -152,13 +152,13 @@ bool UpdateSections(IMAGE_NT_HEADERS* pNtHeader)
 
 void RelocateRSRC(PBYTE prsrc, PIMAGE_RESOURCE_DIRECTORY pird, LONG Delta)
 {
-	if(DWORD NumberOfEntries = pird->NumberOfNamedEntries + pird->NumberOfIdEntries)
+	if (DWORD NumberOfEntries = pird->NumberOfNamedEntries + pird->NumberOfIdEntries)
 	{
 		PIMAGE_RESOURCE_DIRECTORY_ENTRY pirde = (PIMAGE_RESOURCE_DIRECTORY_ENTRY)(pird + 1);
 
 		do
 		{
-			if(pirde->DataIsDirectory)
+			if (pirde->DataIsDirectory)
 			{
 				RelocateRSRC(prsrc,
 					(PIMAGE_RESOURCE_DIRECTORY)(prsrc + pirde->OffsetToDirectory),
@@ -172,7 +172,7 @@ void RelocateRSRC(PBYTE prsrc, PIMAGE_RESOURCE_DIRECTORY pird, LONG Delta)
 				data->OffsetToData += Delta;
 			}
 
-		} while(pirde++, --NumberOfEntries);
+		} while (pirde++, --NumberOfEntries);
 	}
 }
 
@@ -188,13 +188,13 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 	IMAGE_NT_HEADERS* pNtHeader = NULL;
 	IMAGE_OPTIONAL_HEADER* pOptHeader = NULL;
 	IMAGE_DATA_DIRECTORY* pDataDirectory = NULL;
-	if(!GetPtrs((BYTE*)pDosHeader, NULL, &pNtHeader, &pOptHeader))
+	if (!GetPtrs((BYTE*)pDosHeader, NULL, &pNtHeader, &pOptHeader))
 	{
 		return false;
 	}
 	pDataDirectory = pOptHeader->DataDirectory;
 
-	if(pDosHeader->e_magic != IMAGE_DOS_SIGNATURE || pNtHeader->Signature != IMAGE_NT_SIGNATURE)
+	if (pDosHeader->e_magic != IMAGE_DOS_SIGNATURE || pNtHeader->Signature != IMAGE_NT_SIGNATURE)
 	{
 		return false;
 	}
@@ -202,46 +202,46 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 	BYTE* pStart = (BYTE*)pDosHeader;
 
 	IMAGE_DATA_DIRECTORY* pDataDir = pOptHeader->DataDirectory;
-	for(BYTE bDirIndex = 0; bDirIndex < IMAGE_NUMBEROF_DIRECTORY_ENTRIES; ++bDirIndex)
+	for (BYTE bDirIndex = 0; bDirIndex < IMAGE_NUMBEROF_DIRECTORY_ENTRIES; ++bDirIndex)
 	{
 		// Check for empty entry.
-		if(!pDataDir[bDirIndex].VirtualAddress)
+		if (!pDataDir[bDirIndex].VirtualAddress)
 		{
 			continue;
 		}
 
-		if(pDataDir[bDirIndex].VirtualAddress > adjAboveVA)
+		if (pDataDir[bDirIndex].VirtualAddress > adjAboveVA)
 		{
 			pDataDir[bDirIndex].VirtualAddress += dwAdj;
 		}
 
 		// Directory specific updates...
-		if(IMAGE_DIRECTORY_ENTRY_EXPORT == bDirIndex)
+		if (IMAGE_DIRECTORY_ENTRY_EXPORT == bDirIndex)
 		{
 			auto pExportDir = (IMAGE_EXPORT_DIRECTORY*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress));
-			if(pExportDir->AddressOfFunctions > adjAboveVA)
+			if (pExportDir->AddressOfFunctions > adjAboveVA)
 			{
 				pExportDir->AddressOfFunctions += dwAdj;
 			}
-			if(pExportDir->AddressOfNames > adjAboveVA)
+			if (pExportDir->AddressOfNames > adjAboveVA)
 			{
 				pExportDir->AddressOfNames += dwAdj;
 			}
-			if(pExportDir->AddressOfNameOrdinals > adjAboveVA)
+			if (pExportDir->AddressOfNameOrdinals > adjAboveVA)
 			{
 				pExportDir->AddressOfNameOrdinals += dwAdj;
 			}
 		}
-		else if(IMAGE_DIRECTORY_ENTRY_IMPORT == bDirIndex)
+		else if (IMAGE_DIRECTORY_ENTRY_IMPORT == bDirIndex)
 		{
 			auto pImportDir = (IMAGE_IMPORT_DESCRIPTOR*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress));
-			while(pImportDir->Name)
+			while (pImportDir->Name)
 			{
-				if(pImportDir->OriginalFirstThunk > adjAboveVA)
+				if (pImportDir->OriginalFirstThunk > adjAboveVA)
 				{
 					pImportDir->OriginalFirstThunk += dwAdj;
 				}
-				if(pImportDir->FirstThunk > adjAboveVA)
+				if (pImportDir->FirstThunk > adjAboveVA)
 				{
 					pImportDir->FirstThunk += dwAdj;
 				}
@@ -249,12 +249,12 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 				++pImportDir;
 			}
 		}
-		else if(IMAGE_DIRECTORY_ENTRY_RESOURCE == bDirIndex)
+		else if (IMAGE_DIRECTORY_ENTRY_RESOURCE == bDirIndex)
 		{
 			IMAGE_DATA_DIRECTORY resourceDirectory = pNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE];
 
 			// If the resource directory is empty, exit as there are no resources.
-			if(resourceDirectory.Size == 0)
+			if (resourceDirectory.Size == 0)
 			{
 				continue;
 			}
@@ -264,39 +264,6 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 			IMAGE_RESOURCE_DIRECTORY* pResourceDir = (IMAGE_RESOURCE_DIRECTORY*)((uintptr_t)pDosHeader + resourceBase);
 
 			RelocateRSRC((PBYTE)pResourceDir, pResourceDir, dwAdj);
-			continue;
-
-			IMAGE_RESOURCE_DIRECTORY* pTypesDirectory = pResourceDir;
-			IMAGE_RESOURCE_DIRECTORY_ENTRY* pTypeEntries = (IMAGE_RESOURCE_DIRECTORY_ENTRY*)(pTypesDirectory + 1);
-
-			for(uintptr_t ti = 0; ti < pTypesDirectory->NumberOfNamedEntries + pTypesDirectory->NumberOfIdEntries; ti++)
-			{
-				// Parse Names
-				IMAGE_RESOURCE_DIRECTORY_ENTRY* pTypeEntry = &pTypeEntries[ti];
-				IMAGE_RESOURCE_DIRECTORY* pNamesDirectory = (IMAGE_RESOURCE_DIRECTORY*)((uintptr_t)pDosHeader + (pTypeEntry->OffsetToDirectory & 0x7FFFFFFF) + resourceBase);
-				for(uintptr_t ni = 0; ni < pNamesDirectory->NumberOfNamedEntries + pNamesDirectory->NumberOfIdEntries; ni++)
-				{
-					// Parse Langs
-					IMAGE_RESOURCE_DIRECTORY_ENTRY* pNamesEntries = (IMAGE_RESOURCE_DIRECTORY_ENTRY*)(pNamesDirectory + 1);
-					IMAGE_RESOURCE_DIRECTORY_ENTRY* pNameEntry = &pNamesEntries[ni];
-					IMAGE_RESOURCE_DIRECTORY* pLangsDirectory = (IMAGE_RESOURCE_DIRECTORY*)((uintptr_t)pDosHeader + (pNameEntry->OffsetToDirectory & 0x7FFFFFFF) + resourceBase);
-					for(uintptr_t li = 0; li < pLangsDirectory->NumberOfNamedEntries + pLangsDirectory->NumberOfIdEntries; li++)
-					{
-						// Parse Data
-						IMAGE_RESOURCE_DIRECTORY_ENTRY* pLangsEntries = (IMAGE_RESOURCE_DIRECTORY_ENTRY*)(pLangsDirectory + 1);
-						IMAGE_RESOURCE_DIRECTORY_ENTRY* pLangEntry = &pLangsEntries[li];
-						IMAGE_RESOURCE_DATA_ENTRY* pDataEntry = (IMAGE_RESOURCE_DATA_ENTRY*)((uintptr_t)pDosHeader + resourceBase + pLangEntry->OffsetToData);
-
-						/*ResourceInfo entry = {};
-						entry.Language = pLangsEntries->Id;
-						entry.Size = pDataEntry->Size;
-						entry.Type = (PIMAGE_RESOURCE_DIR_STRING_U)(pTypeEntry->NameIsString) ? (PIMAGE_RESOURCE_DIR_STRING_U)((uintptr_t)pDosHeader + pTypeEntry->NameOffset + resourceBase) : (PIMAGE_RESOURCE_DIR_STRING_U)(pTypeEntry->Id);
-						entry.Name = (PIMAGE_RESOURCE_DIR_STRING_U)(pNameEntry->NameIsString) ? (PIMAGE_RESOURCE_DIR_STRING_U)((uintptr_t)pDosHeader + pNameEntry->NameOffset + resourceBase) : (PIMAGE_RESOURCE_DIR_STRING_U)(pNameEntry->Id);
-						entry.data = (BYTE*)pDosHeader + RVAToFileOffset(pNtHeader, pDataEntry->OffsetToData);
-						resources.push_back(entry);*/
-					}
-				}
-			}
 		}
 		//else if(IMAGE_DIRECTORY_ENTRY_EXCEPTION == bDirIndex)
 		//{
@@ -318,24 +285,29 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdj, DWORD adjA
 		//	}
 		//}
 		//else if(IMAGE_DIRECTORY_ENTRY_SECURITY == bDirIndex) {}
-		//else if(IMAGE_DIRECTORY_ENTRY_BASERELOC == bDirIndex)
-		//{
-		//	auto pBaseReloc = (IMAGE_BASE_RELOCATION*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress));
-		//	while(pBaseReloc->VirtualAddress)
-		//	{
-		//		WORD* pReloc = (WORD*)(pBaseReloc + 1);
-		//		for(int x = 0; x < (pBaseReloc->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD); ++x)
-		//		{
-		//			if((*pReloc & 0xFFF) > adjAboveVA)
-		//			{
-		//				*pReloc += (WORD)dwAdj;
-		//			}
-		//			++pReloc;
-		//		}
+		else if (IMAGE_DIRECTORY_ENTRY_BASERELOC == bDirIndex)
+		{
+			auto pBaseReloc = (IMAGE_BASE_RELOCATION*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress));
+			while (pBaseReloc->VirtualAddress)
+			{
+				if (pBaseReloc->VirtualAddress > adjAboveVA)
+				{
+					pBaseReloc->VirtualAddress += dwAdj;
+				}
 
-		//		pBaseReloc = (IMAGE_BASE_RELOCATION*)((BYTE*)pBaseReloc + pBaseReloc->SizeOfBlock);
-		//	}
-		//}
+				WORD* pReloc = (WORD*)(pBaseReloc + 1);
+				for (int x = 0; x < (pBaseReloc->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD); ++x)
+				{
+					if ((*pReloc & 0xFFF) > adjAboveVA)
+					{
+						*pReloc += (WORD)dwAdj;
+					}
+					++pReloc;
+				}
+
+				pBaseReloc = (IMAGE_BASE_RELOCATION*)((BYTE*)pBaseReloc + pBaseReloc->SizeOfBlock);
+			}
+		}
 		//else if(IMAGE_DIRECTORY_ENTRY_DEBUG == bDirIndex)
 		//{
 		//	auto pDebugDir = (IMAGE_DEBUG_DIRECTORY*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress));
