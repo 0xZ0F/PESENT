@@ -321,7 +321,7 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, DWORD dw
 		//		pTlsDir->AddressOfCallBacks += dwAdjVA;
 		//	}
 		//}
-		else if (IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG == bDirIndex)
+		/*else if (IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG == bDirIndex)
 		{
 			auto pLoadConfigDir = (IMAGE_LOAD_CONFIG_DIRECTORY*)(pStart + RVAToFileOffset(pNtHeader, pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG].VirtualAddress));
 			if (pLoadConfigDir->SecurityCookie - pOptHeader->ImageBase > adjAboveVA)
@@ -366,7 +366,7 @@ bool AdjustDataDirectories(IMAGE_DOS_HEADER* pDosHeader, DWORD dwAdjVA, DWORD dw
 					*pTmp += dwAdjVA;
 				}
 			}
-		}
+		}*/
 		//else if(IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT == bDirIndex)
 		//{
 		//	// This will probably cause issues since WORD vs DWORD and WORD max.
