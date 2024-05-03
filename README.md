@@ -103,7 +103,21 @@ If you try and run it now, it may or may not work. The problem now is that while
 
 The updating of the directory entries is done in [AdjustDataDirectories() in PEHelpers.hpp](PESENT/PEHelpers.hpp).
 
-Once all of the directory entries are updated, now it should work... usually. The PE header has many complex and still undocumented structures especially with contraptions such as .NET. With that said, hopefully this PoC and guide can get you pretty far and if you do encounter any extra "fun" you can figure it out a little faster.
+Once all of the directory entries are updated, now it should work... usually.
+
+### It doesn't always work.
+
+The PE header has many complex and still undocumented structures especially with contraptions such as .NET. But that's not the biggest problem.
+
+Everything falls apart when the compiler decides to use relative addressing, which isn't affected by relocations which can be updated. More specifically, a problem arises when the offset for the relative addressing goes into what was an executable section past the section being modified. When the section to be modified is enlarged, the offset now points to the wrong location. This can be seen with the target compiled in debug mode which adds the `.msvcjmc` section. In this scenario, the process is created successfully, however, during initialization an attempt is made to access data inside of `.msvcjmc`. When this happens, the offset being accessed is invalid due to the modified section and different virtual addresses and section mappings.
+
+I'm unsure if there is a way around this within the PE header that I'm missing. As far as I know, however, this is a problem created by the compiler which has no easy fix. The only fix I see is disassembling executable sections, looking for instances of relative address usage, and updating them.
+
+## Conclusion
+
+Extending a section which is surrounded by existing sections is an interesting, but ultimately unworthy, task. It presents too many issues and in some cases problems which have no direct solution. In most situations, you're better off simply appending a section to the PE and searching for it manually, as seen in the example program. There are other alternatives but they are mostly irrelevant.
+
+With that said, hopefully this PoC and guide can get you pretty far and if you do encounter any extra "fun" you can figure it out a little faster.
 
 ### Before
 
