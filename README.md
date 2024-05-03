@@ -105,6 +105,8 @@ The updating of the directory entries is done in [AdjustDataDirectories() in PEH
 
 Once all of the directory entries are updated, now it should work... usually.
 
+> You may also want to update the PE checksums if that's a requirement for your process.
+
 ### It doesn't always work.
 
 The PE header has many complex and still undocumented structures especially with contraptions such as .NET. But that's not the biggest problem.
