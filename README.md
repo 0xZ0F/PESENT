@@ -1,3 +1,5 @@
+Check out the blog post here: <https://debugxp.com/posts/ExtendingPESections/>
+
 > A basic understanding of the PE header is assumed.
 
 I was recently looking into post-build configuration for binaries and I was curious about the modification of PE sections. I already knew how to enlarge the last section of the PE, but I wanted more. I didn't like having to search my own binary for data that I put into it. As such, I set out to be able to extend an existing section regardless of it's order or location in the header.
